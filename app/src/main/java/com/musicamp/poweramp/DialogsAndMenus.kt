@@ -1,0 +1,2151 @@
+package com.musicamp.poweramp
+
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Help
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Notes
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ShowChart
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Wallpaper
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.ThumbDown
+import androidx.compose.material.icons.outlined.ThumbUp
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+/**
+ * 1. Main Menu Sheet (`05_main_menu.png`) anchored right above the bottom dock.
+ */
+@Composable
+fun PowerampMainMenuOverlay(controller: PowerampController) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0x99000000))
+            .clickable { controller.showMainMenuSheet = false }
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = 8.dp, vertical = 122.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp, bottomStart = 20.dp, bottomEnd = 20.dp))
+                .background(Color(0xFF18191B))
+                .clickable(enabled = false) {}
+                .padding(vertical = 18.dp, horizontal = 24.dp)
+        ) {
+            // POWERAMP Full Version Header
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "POWERAMP",
+                    color = Color.White,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Black,
+                    fontStyle = FontStyle.Italic,
+                    letterSpacing = 1.2.sp
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "Full Version",
+                    color = Color.White,
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // Settings item
+            MainMenuRowItem(
+                icon = Icons.Filled.Settings,
+                label = "Settings",
+                onClick = {
+                    controller.showMainMenuSheet = false
+                    controller.showSettingsScreen = true
+                }
+            )
+
+            // Changelog item
+            MainMenuRowItem(
+                icon = Icons.Filled.ShowChart,
+                label = "Changelog",
+                onClick = {
+                    controller.showMainMenuSheet = false
+                    controller.showChangelogDialog = true
+                }
+            )
+
+            // Help item
+            MainMenuRowItem(
+                icon = Icons.Filled.Help,
+                label = "Help",
+                onClick = {
+                    controller.showMainMenuSheet = false
+                    controller.showHelpDialog = true
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun MainMenuRowItem(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(50.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = Color.White,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(modifier = Modifier.width(22.dp))
+        Text(
+            text = label,
+            color = Color.White,
+            fontSize = 17.sp,
+            fontWeight = FontWeight.ExtraBold
+        )
+    }
+}
+
+/**
+ * 2. Track Context Menu Dialog (`11_player_menu.png`).
+ */
+@Composable
+fun PowerampTrackMenuDialog(controller: PowerampController) {
+    val track = controller.actionTargetTrack ?: controller.currentTrack ?: return
+    val isLiked = track.rating == 1
+    val isUnliked = track.rating == -1
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xAA000000))
+            .clickable { controller.showTrackActionDialog = false },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 24.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(28.dp))
+                .background(PowerampDialogBg)
+                .clickable(enabled = false) {}
+                .padding(vertical = 18.dp, horizontal = 18.dp)
+        ) {
+            // Top Track Summary Row (`11_player_menu.png`)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PowerampMountainArtwork(modifier = Modifier.size(92.dp))
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = track.title,
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = track.artist,
+                        color = Color(0xFFE0E2E6),
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "𝄞 ${track.metaLine}",
+                        color = PowerampTextSecondary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .size(width = 40.dp, height = 28.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .border(1.dp, Color(0xFF5A5B60), RoundedCornerShape(14.dp))
+                                .clickable {
+                                    val newR = if (isLiked) 0 else 1
+                                    controller.updateTrack(track.copy(rating = newR))
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.ThumbUp,
+                                contentDescription = "Like",
+                                tint = if (isLiked) PowerampNeonGreen else Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(width = 40.dp, height = 28.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .border(1.dp, Color(0xFF5A5B60), RoundedCornerShape(14.dp))
+                                .clickable {
+                                    val newR = if (isUnliked) 0 else -1
+                                    controller.updateTrack(track.copy(rating = newR))
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.ThumbDown,
+                                contentDescription = "Unlike",
+                                tint = if (isUnliked) Color(0xFFFF5252) else Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+            HorizontalDivider(color = Color(0xFF333438), thickness = 1.dp)
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Row 1: Delete (full width)
+            TrackMenuActionButton(
+                icon = Icons.Outlined.Delete,
+                label = "Delete",
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                controller.showTrackActionDialog = false
+                controller.deleteTrack(track)
+            }
+
+            // Row 2: Playlist (left) | Bookmark (right)
+            Row(modifier = Modifier.fillMaxWidth()) {
+                TrackMenuActionButton(
+                    icon = Icons.Filled.Add,
+                    label = "Playlist",
+                    modifier = Modifier.weight(1f)
+                ) {
+                    controller.showTrackActionDialog = false
+                    controller.showAddToPlaylistDialog = true
+                }
+                TrackMenuActionButton(
+                    icon = Icons.Outlined.BookmarkBorder,
+                    label = "Bookmark",
+                    modifier = Modifier.weight(1f)
+                ) {
+                    controller.showTrackActionDialog = false
+                    controller.addBookmarkForTrack(track)
+                }
+            }
+
+            // Row 3: Album Art (full width)
+            TrackMenuActionButton(
+                icon = Icons.Filled.Image,
+                label = "Album Art",
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                controller.showTrackActionDialog = false
+                controller.showAlbumArtDialog = true
+            }
+
+            // Row 4: Info/Tags (left) | Lyrics (right)
+            Row(modifier = Modifier.fillMaxWidth()) {
+                TrackMenuActionButton(
+                    icon = Icons.Outlined.Info,
+                    label = "Info/Tags",
+                    modifier = Modifier.weight(1f)
+                ) {
+                    controller.showTrackActionDialog = false
+                    controller.showInfoTagsSheet = true
+                }
+                TrackMenuActionButton(
+                    icon = Icons.Filled.Notes,
+                    label = "Lyrics",
+                    modifier = Modifier.weight(1f)
+                ) {
+                    controller.showTrackActionDialog = false
+                    controller.showLyricsScreen = true
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+            HorizontalDivider(color = Color(0xFF333438), thickness = 1.dp)
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Row 5: Artist (left) | Album (right)
+            Row(modifier = Modifier.fillMaxWidth()) {
+                TrackMenuActionButton(
+                    icon = Icons.Filled.Mic,
+                    label = "Artist",
+                    modifier = Modifier.weight(1f)
+                ) {
+                    controller.showTrackActionDialog = false
+                    controller.currentMainTab = MainNavTab.LIBRARY
+                    controller.activeLibraryCategory = LibraryCategory.ARTISTS
+                    controller.activeSubFilter = track.artist
+                }
+                TrackMenuActionButton(
+                    icon = Icons.Filled.Album,
+                    label = "Album",
+                    modifier = Modifier.weight(1f)
+                ) {
+                    controller.showTrackActionDialog = false
+                    controller.currentMainTab = MainNavTab.LIBRARY
+                    controller.activeLibraryCategory = LibraryCategory.ALBUMS
+                    controller.activeSubFilter = track.album
+                }
+            }
+
+            // Row 6: Folder (left) | Genre (right)
+            Row(modifier = Modifier.fillMaxWidth()) {
+                TrackMenuActionButton(
+                    icon = Icons.Filled.Folder,
+                    label = "Folder",
+                    modifier = Modifier.weight(1f)
+                ) {
+                    controller.showTrackActionDialog = false
+                    controller.currentMainTab = MainNavTab.LIBRARY
+                    controller.activeLibraryCategory = LibraryCategory.FOLDERS
+                    controller.activeSubFilter = track.folderName
+                }
+                TrackMenuActionButton(
+                    icon = Icons.Filled.MusicNote,
+                    label = "Genre",
+                    modifier = Modifier.weight(1f)
+                ) {
+                    controller.showTrackActionDialog = false
+                    controller.currentMainTab = MainNavTab.LIBRARY
+                    controller.activeLibraryCategory = LibraryCategory.GENRES
+                    controller.activeSubFilter = track.genre
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrackMenuActionButton(
+    icon: ImageVector,
+    label: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = modifier
+            .height(46.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = Color.White,
+            modifier = Modifier.size(21.dp)
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(
+            text = label,
+            color = Color.White,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.ExtraBold,
+            maxLines = 1
+        )
+    }
+}
+
+/**
+ * 3. Info / Tags Bottom Sheet (`12_info_tags.png`) + Interactive Tag Editor Dialog.
+ */
+@Composable
+fun PowerampInfoTagsSheet(controller: PowerampController) {
+    val track = controller.actionTargetTrack ?: controller.currentTrack ?: return
+    val minutesAgo = if (track.lastPlayedTimestamp > 0) {
+        ((System.currentTimeMillis() - track.lastPlayedTimestamp) / 60_000L).coerceAtLeast(1L)
+    } else 6L
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0x99000000))
+            .clickable { controller.showInfoTagsSheet = false }
+    ) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = 8.dp, vertical = 16.dp)
+                .fillMaxWidth()
+                .height(455.dp)
+                .clip(RoundedCornerShape(26.dp))
+                .background(PowerampDialogBg)
+                .clickable(enabled = false) {}
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Info/Tags",
+                color = Color.White,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item {
+                    Column {
+                        Text(
+                            text = track.folderPath,
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            textDecoration = TextDecoration.Underline,
+                            modifier = Modifier.clickable {
+                                controller.showInfoTagsSheet = false
+                                controller.currentMainTab = MainNavTab.LIBRARY
+                                controller.activeLibraryCategory = LibraryCategory.FOLDERS
+                            }
+                        )
+                        Text(
+                            text = track.fileName,
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(1.dp, Color(0xFF9EA0A5), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                        ) {
+                            Text(
+                                text = track.formatExt.lowercase(),
+                                color = Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        val sec = track.durationMs / 1000L
+                        Text(
+                            text = "${track.formatExt.uppercase()}, $sec sec (${track.formattedDuration}), ${track.sampleRateHz} Hz, 16 bit, Stereo, ${track.bitrateKbps} kbps, ${track.fileSizeKb}kB",
+                            color = PowerampTextSecondary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("Played Times", color = PowerampTextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("${track.playCount.coerceAtLeast(1)}", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Column {
+                            Text("Last Played", color = PowerampTextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("$minutesAgo min. ago", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Reset Stats",
+                            tint = Color.White,
+                            modifier = Modifier
+                                .size(22.dp)
+                                .clickable {
+                                    controller.updateTrack(track.copy(playCount = 0))
+                                    controller.showToast("Play count cleared")
+                                }
+                        )
+                    }
+                }
+
+                item {
+                    InfoTagField("Title", track.title)
+                }
+
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        InfoTagField("Track", track.trackNumber.toString(), Modifier.weight(1f))
+                        InfoTagField("Disc", track.discNumber.toString(), Modifier.weight(1f))
+                        InfoTagField("Year", track.year.toString(), Modifier.weight(1f))
+                    }
+                }
+
+                item {
+                    InfoTagField("Genre", track.genre)
+                }
+
+                item {
+                    InfoTagField("Artist", track.artist)
+                }
+
+                item {
+                    InfoTagField("Album", track.album)
+                }
+
+                item {
+                    InfoTagField("Album Artist", track.albumArtist)
+                }
+
+                item {
+                    InfoTagField("Composer", track.composer)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Bottom Action Row: Search & Edit Tags Pill Button (`12_info_tags.png`)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Search",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(18.dp))
+                        .clickable {
+                            controller.showInfoTagsSheet = false
+                            controller.searchQuery = track.title.substringBeforeLast(".")
+                            controller.currentMainTab = MainNavTab.SEARCH
+                        }
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Box(
+                    modifier = Modifier
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color(0xFF4F5156))
+                        .clickable {
+                            controller.showInfoTagsSheet = false
+                            controller.showEditTagsDialog = true
+                        }
+                        .padding(horizontal = 22.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Edit Tags",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InfoTagField(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier.padding(vertical = 2.dp)) {
+        Text(text = label, color = PowerampTextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        if (value.isNotBlank()) {
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(text = value, color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/**
+ * Edit Tags Modal Dialog allowing full editing of Title, Artist, Album, Genre, Year, and Lyrics.
+ */
+@Composable
+fun PowerampEditTagsDialog(controller: PowerampController) {
+    val track = controller.actionTargetTrack ?: controller.currentTrack ?: return
+    var title by remember(track.id) { mutableStateOf(track.title) }
+    var artist by remember(track.id) { mutableStateOf(track.artist) }
+    var album by remember(track.id) { mutableStateOf(track.album) }
+    var genre by remember(track.id) { mutableStateOf(track.genre) }
+    var yearStr by remember(track.id) { mutableStateOf(track.year.toString()) }
+    var lyrics by remember(track.id) { mutableStateOf(track.lyrics) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xAA000000))
+            .clickable { controller.showEditTagsDialog = false },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 20.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(26.dp))
+                .background(PowerampDialogBg)
+                .clickable(enabled = false) {}
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Edit Tags",
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            TagEditInput("Title", title) { title = it }
+            TagEditInput("Artist", artist) { artist = it }
+            TagEditInput("Album", album) { album = it }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(modifier = Modifier.weight(1f)) {
+                    TagEditInput("Genre", genre) { genre = it }
+                }
+                Box(modifier = Modifier.width(95.dp)) {
+                    TagEditInput("Year", yearStr) { yearStr = it }
+                }
+            }
+            TagEditInput("Lyrics", lyrics) { lyrics = it }
+
+            Spacer(modifier = Modifier.height(14.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = { controller.showEditTagsDialog = false }) {
+                    Text("Cancel", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .height(38.dp)
+                        .clip(RoundedCornerShape(19.dp))
+                        .background(Color(0xFF4F5156))
+                        .clickable {
+                            controller.updateTrack(
+                                track.copy(
+                                    title = title.ifBlank { track.title },
+                                    artist = artist.ifBlank { "Unknown artist" },
+                                    album = album.ifBlank { "Music" },
+                                    genre = genre.ifBlank { "Electronic" },
+                                    year = yearStr.toIntOrNull() ?: track.year,
+                                    lyrics = lyrics
+                                )
+                            )
+                            controller.showEditTagsDialog = false
+                            controller.showToast("Tags Saved", title)
+                        }
+                        .padding(horizontal = 20.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Save", color = Color.White, fontWeight = FontWeight.ExtraBold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TagEditInput(label: String, value: String, onValueChange: (String) -> Unit) {
+    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+        Text(text = label, color = PowerampTextSecondary, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(2.dp))
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            textStyle = TextStyle(color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold),
+            cursorBrush = SolidColor(PowerampNeonGreen),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color(0xFF16171A))
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+        )
+    }
+}
+
+/**
+ * 4. Sleep Timer Dialog (`10_sleep_timer.png`).
+ */
+@Composable
+fun PowerampSleepTimerDialog(controller: PowerampController) {
+    var draftMinutes by remember { mutableIntStateOf(controller.sleepTimerMinutes) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xAA000000))
+            .clickable { controller.showSleepTimerDialog = false },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 30.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(28.dp))
+                .background(PowerampDialogBg)
+                .clickable(enabled = false) {}
+                .padding(22.dp)
+        ) {
+            // Header row: Clock icon + "Sleep Timer: disabled"
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Filled.Schedule,
+                    contentDescription = "Sleep Timer",
+                    tint = Color(0xFF9EA0A5),
+                    modifier = Modifier.size(26.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = if (draftMinutes == 0) "Sleep Timer: disabled" else "Sleep Timer: $draftMinutes min.",
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Centered Status Text ("Disabled" or "15 minutes")
+            Text(
+                text = if (draftMinutes == 0) "Disabled" else "$draftMinutes min",
+                color = Color.White,
+                fontSize = 19.sp,
+                fontWeight = FontWeight.ExtraBold,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            )
+
+            Spacer(modifier = Modifier.height(22.dp))
+
+            // Rotary Knob in Center (`10_sleep_timer.png`)
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                PowerampRotaryKnob(
+                    value = (draftMinutes / 120f).coerceIn(0f, 1f),
+                    onValueChange = { norm ->
+                        draftMinutes = ((norm * 120f) / 5f).toInt() * 5
+                    },
+                    size = 118.dp,
+                    bipolar = true,
+                    showGreenArc = draftMinutes > 0
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Checkbox row: "Play last song to end"
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        controller.sleepPlayLastSongToEnd = !controller.sleepPlayLastSongToEnd
+                    }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = if (controller.sleepPlayLastSongToEnd) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank,
+                    contentDescription = "Play last song to end",
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "Play last song to end",
+                    color = Color.White,
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Bottom Action Buttons: Disable (left), Cancel, OK pill (right) (`10_sleep_timer.png`)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Disable",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(18.dp))
+                        .clickable {
+                            controller.setSleepTimer(0)
+                            controller.showSleepTimerDialog = false
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                )
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Cancel",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable { controller.showSleepTimerDialog = false }
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .height(38.dp)
+                            .clip(RoundedCornerShape(19.dp))
+                            .background(Color(0xFF4F5156))
+                            .clickable {
+                                controller.setSleepTimer(if (draftMinutes == 0) 15 else draftMinutes)
+                                controller.showSleepTimerDialog = false
+                            }
+                            .padding(horizontal = 24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "OK",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 5. Equalizer Presets Selection Bottom Sheet (`06_eq_presets.png`).
+ */
+@Composable
+fun PowerampEqPresetBottomSheet(controller: PowerampController) {
+    var presetQuery by remember { mutableStateOf("") }
+    var activeFilter by remember { mutableStateOf("All") }
+
+    val filteredPresets = controller.eqPresets.filter { preset ->
+        val matchesQuery = presetQuery.isBlank() || preset.name.contains(presetQuery, ignoreCase = true)
+        val matchesChip = when (activeFilter) {
+            "User" -> preset.category == "User"
+            "Built-in" -> preset.category == "Built-in"
+            "AutoEq" -> preset.category == "AutoEq"
+            "Graphic" -> !preset.isParametric
+            "Parametric" -> preset.isParametric
+            else -> true
+        }
+        matchesQuery && matchesChip
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xAA000000))
+            .clickable { controller.showEqPresetSheet = false },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 14.dp)
+                .fillMaxWidth()
+                .height(520.dp)
+                .clip(RoundedCornerShape(28.dp))
+                .background(PowerampDialogBg)
+                .clickable(enabled = false) {}
+                .padding(16.dp)
+        ) {
+            // Search bar inside Preset Picker (`06_eq_presets.png`)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(Color(0xFF2D2E32))
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Search,
+                    contentDescription = "Search Presets",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Box(modifier = Modifier.weight(1f)) {
+                    if (presetQuery.isEmpty()) {
+                        Text("Search", color = Color(0xFF9EA0A5), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    }
+                    BasicTextField(
+                        value = presetQuery,
+                        onValueChange = { presetQuery = it },
+                        singleLine = true,
+                        textStyle = TextStyle(color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold),
+                        cursorBrush = SolidColor(PowerampNeonGreen),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Clear",
+                    tint = Color.White,
+                    modifier = Modifier
+                        .size(20.dp)
+                        .clickable { presetQuery = "" }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Row 1 Filter Chips: User, Built-in, AutoEq | Graphic, Parametric (`06_eq_presets.png`)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(listOf("User", "Built-in", "AutoEq", "Graphic", "Parametric")) { chip ->
+                    val selected = activeFilter == chip
+                    Box(
+                        modifier = Modifier
+                            .height(30.dp)
+                            .clip(RoundedCornerShape(15.dp))
+                            .background(if (selected) Color(0xFF45474D) else Color(0xFF323338))
+                            .clickable { activeFilter = if (selected) "All" else chip }
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = chip,
+                            color = Color.White,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Row 2 Filter Chips: Assigned | Device | x Reset filters (`06_eq_presets.png`)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(
+                    modifier = Modifier
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(15.dp))
+                        .border(1.dp, Color(0xFF52545A), RoundedCornerShape(15.dp))
+                        .clickable { activeFilter = "User" }
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Assigned", color = Color(0xFFD0D2D6), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Box(
+                    modifier = Modifier
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(15.dp))
+                        .border(1.dp, Color(0xFF3E4044), RoundedCornerShape(15.dp))
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Device", color = Color(0xFF6B6D72), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Box(
+                    modifier = Modifier
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(15.dp))
+                        .border(1.dp, Color(0xFF52545A), RoundedCornerShape(15.dp))
+                        .clickable {
+                            activeFilter = "All"
+                            presetQuery = ""
+                        }
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("✕  Reset filters", color = Color(0xFFD0D2D6), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Grouped Presets List with Green Frequency Curve Thumbnails (`06_eq_presets.png`)
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                val grouped = filteredPresets.groupBy { it.category }
+                grouped.forEach { (catName, presetsInCat) ->
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = catName,
+                                color = Color.White,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            HorizontalDivider(color = Color(0xFF34353A), thickness = 1.dp)
+                        }
+                    }
+
+                    items(presetsInCat) { preset ->
+                        val isSelected = controller.selectedPresetName == preset.name ||
+                            (controller.selectedPresetName == "Preset" && preset.name == "Graphic")
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable {
+                                    controller.applyEqPreset(preset)
+                                    controller.showEqPresetSheet = false
+                                }
+                                .padding(horizontal = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Mini frequency curve thumbnail canvas
+                            Canvas(
+                                modifier = Modifier
+                                    .width(76.dp)
+                                    .height(36.dp)
+                            ) {
+                                val w = size.width
+                                val h = size.height
+                                val cy = h * 0.45f
+                                val path = Path()
+                                val bands = preset.bands
+                                val step = w / (bands.size - 1).coerceAtLeast(1)
+                                bands.forEachIndexed { idx, db ->
+                                    val x = idx * step
+                                    val y = cy - (db / 15f) * (h * 0.35f)
+                                    if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                                }
+                                drawPath(
+                                    path = path,
+                                    color = if (preset.isParametric) Color(0xFF6B6D72) else PowerampNeonGreen,
+                                    style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            Icon(
+                                imageVector = Icons.Filled.Tune,
+                                contentDescription = null,
+                                tint = Color(0xFF9EA0A5),
+                                modifier = Modifier.size(16.dp)
+                            )
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = preset.name,
+                                    color = Color.White,
+                                    fontSize = 15.5.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                if (preset.category == "User") {
+                                    Text(
+                                        text = "Default Preset",
+                                        color = PowerampTextSecondary,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Filled.Check,
+                                    contentDescription = "Selected",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 6. Reverb Preset Picker Dialog.
+ */
+@Composable
+fun PowerampReverbPresetDialog(controller: PowerampController) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xAA000000))
+            .clickable { controller.showReverbPresetSheet = false },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 24.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(26.dp))
+                .background(PowerampDialogBg)
+                .clickable(enabled = false) {}
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Reverb Presets",
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            controller.reverbPresets.forEach { preset ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            controller.applyReverbPreset(preset)
+                            controller.showReverbPresetSheet = false
+                        }
+                        .padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = preset.name,
+                        color = Color.White,
+                        fontSize = 15.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (controller.selectedReverbPreset == preset.name) {
+                        Icon(
+                            imageVector = Icons.Filled.Check,
+                            contentDescription = "Active",
+                            tint = PowerampNeonGreen,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 7. Add To Playlist Dialog & Create New Playlist.
+ */
+@Composable
+fun PowerampPlaylistDialog(controller: PowerampController) {
+    val track = controller.actionTargetTrack ?: controller.currentTrack
+    var newPlaylistName by remember { mutableStateOf("") }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xAA000000))
+            .clickable { controller.showAddToPlaylistDialog = false },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 24.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(26.dp))
+                .background(PowerampDialogBg)
+                .clickable(enabled = false) {}
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Add to Playlist",
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            controller.playlists.forEach { pl ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            if (track != null) {
+                                controller.addTrackToPlaylist(track, pl.id)
+                            }
+                            controller.showAddToPlaylistDialog = false
+                        }
+                        .padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(pl.name, color = Color.White, fontSize = 15.5.sp, fontWeight = FontWeight.Bold)
+                    Text("${pl.trackIds.size} songs", color = PowerampTextSecondary, fontSize = 12.5.sp)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            TagEditInput("New Playlist Name", newPlaylistName) { newPlaylistName = it }
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = { controller.showAddToPlaylistDialog = false }) {
+                    Text("Close", color = Color.White)
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Color(0xFF4F5156))
+                        .clickable {
+                            if (newPlaylistName.isNotBlank()) {
+                                controller.createPlaylist(newPlaylistName, track)
+                                controller.showAddToPlaylistDialog = false
+                            }
+                        }
+                        .padding(horizontal = 18.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("+ Create", color = Color.White, fontWeight = FontWeight.ExtraBold)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 8. Full Poweramp Settings Screen (`17_settings_clean.png`).
+ */
+@Composable
+fun PowerampSettingsOverlay(controller: PowerampController) {
+    var activeSubSetting by remember { mutableStateOf<String?>(null) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF3F4F8))
+    ) {
+        // Light Material Top Bar matching `17_settings_clean.png`
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(60.dp)
+                .background(Color(0xFFEDEEF2))
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.ArrowBack,
+                contentDescription = "Back",
+                tint = Color(0xFF1A1B1E),
+                modifier = Modifier
+                    .size(26.dp)
+                    .clickable {
+                        if (activeSubSetting != null) activeSubSetting = null
+                        else controller.showSettingsScreen = false
+                    }
+            )
+            Spacer(modifier = Modifier.width(20.dp))
+            Text(
+                text = activeSubSetting ?: "Settings",
+                color = Color(0xFF1A1B1E),
+                fontSize = 21.sp,
+                fontWeight = FontWeight.Normal,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(
+                imageVector = Icons.Filled.Search,
+                contentDescription = "Search Settings",
+                tint = Color(0xFF1A1B1E),
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Icon(
+                imageVector = Icons.Filled.Close,
+                contentDescription = "Close Settings",
+                tint = Color(0xFF1A1B1E),
+                modifier = Modifier
+                    .size(24.dp)
+                    .clickable { controller.showSettingsScreen = false }
+            )
+        }
+
+        HorizontalDivider(color = Color(0xFFD8DADF), thickness = 1.dp)
+
+        if (activeSubSetting != null) {
+            // Interactive, fully functional sub-settings view
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                when (activeSubSetting) {
+                    "Look and Feel" -> {
+                        item {
+                            SettingChipSelectorRow(
+                                title = "Theme Skin",
+                                options = listOf("Dark (Default)", "Light", "Black (OLED)", "Neon Green Accent"),
+                                selected = controller.skinTheme,
+                                onSelect = { controller.skinTheme = it }
+                            )
+                        }
+                        item {
+                            SettingChipSelectorRow(
+                                title = "Settings Theme",
+                                options = listOf("Default", "Light", "Dark", "Follow Day/Night"),
+                                selected = controller.settingsTheme,
+                                onSelect = { controller.settingsTheme = it }
+                            )
+                        }
+                        item {
+                            SettingChipSelectorRow(
+                                title = "Settings Font",
+                                options = listOf("Default", "Alternative font", "Bold", "Bold+"),
+                                selected = controller.settingsFont,
+                                onSelect = { controller.settingsFont = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Waveseek Smooth Animation",
+                                subtitle = "Real-time scrolling waveform seekbar",
+                                checked = controller.smoothSeekbarAnimation,
+                                onCheckedChange = { controller.smoothSeekbarAnimation = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Play/Pause Morphing Animation",
+                                subtitle = "Poweramp rounded double pillar to triangle spring morph",
+                                checked = controller.playPauseMorphAnimation,
+                                onCheckedChange = { controller.playPauseMorphAnimation = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Track Slide Transitions",
+                                subtitle = "Smooth horizontal slide animation on track change",
+                                checked = controller.trackSlideTransitions,
+                                onCheckedChange = { controller.trackSlideTransitions = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Status Bar Overlay",
+                                subtitle = "Show transparent audiophile top status bar",
+                                checked = controller.showStatusBarOverlay,
+                                onCheckedChange = { controller.showStatusBarOverlay = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Filename as Title",
+                                subtitle = "Fallback to raw audio file name if tag title is empty",
+                                checked = controller.filenameAsTitle,
+                                onCheckedChange = { controller.filenameAsTitle = it }
+                            )
+                        }
+                    }
+
+                    "Audio" -> {
+                        item {
+                            SettingSliderRow(
+                                title = "Crossfade Duration",
+                                displayValue = "%.1f seconds".format(controller.crossfadeDurationSec),
+                                fraction = controller.crossfadeDurationSec / 10f,
+                                onFractionChange = { controller.crossfadeDurationSec = it * 10f }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Auto Crossfade",
+                                subtitle = "Smooth crossfade on track change and completion",
+                                checked = controller.crossfadeEnabled,
+                                onCheckedChange = { controller.crossfadeEnabled = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Gapless Playback",
+                                subtitle = "Zero latency transitions between album tracks",
+                                checked = controller.gaplessEnabled,
+                                onCheckedChange = { controller.gaplessEnabled = it }
+                            )
+                        }
+                        item {
+                            SettingChipSelectorRow(
+                                title = "ReplayGain Mode",
+                                options = listOf("Off", "Track Gain", "Album Gain"),
+                                selected = controller.replayGainMode,
+                                onSelect = { controller.replayGainMode = it }
+                            )
+                        }
+                        item {
+                            SettingSliderRow(
+                                title = "ReplayGain Preamp",
+                                displayValue = "%+.1f dB".format(controller.replayGainPreampDb),
+                                fraction = (controller.replayGainPreampDb + 6f) / 12f,
+                                onFractionChange = { controller.replayGainPreampDb = (it * 12f) - 6f }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Direct Volume Control (DVC)",
+                                subtitle = "High dynamic range & equalizer headroom pipeline",
+                                checked = controller.dvcEnabled,
+                                onCheckedChange = { controller.dvcEnabled = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Hi-Res Audio Output",
+                                subtitle = "24-bit / 192 kHz high-precision internal rendering",
+                                checked = controller.hiResAudioEnabled,
+                                onCheckedChange = { controller.hiResAudioEnabled = it }
+                            )
+                        }
+                        item {
+                            SettingChipSelectorRow(
+                                title = "Audio Buffer Size",
+                                options = listOf("Small (25ms)", "Normal (50ms)", "Large (100ms)", "Huge (200ms)"),
+                                selected = controller.audioBufferSize,
+                                onSelect = { controller.audioBufferSize = it }
+                            )
+                        }
+                        item {
+                            // Audio Processing Info Card
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color(0xFFE2E4EB))
+                                    .padding(14.dp)
+                            ) {
+                                Column {
+                                    Text(
+                                        text = "AUDIO ENGINE STATUS",
+                                        color = Color(0xFF38538A),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        letterSpacing = 0.8.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "Output: OpenSL ES / AudioTrack\nPrecision: 64-bit float DSP\nSample Rate: 44.1 kHz (Bit-perfect)\nDVC: ${if (controller.dvcEnabled) "Active (+6dB Headroom)" else "Disabled"}\nEqualizer: 10-band Graphic / Tone active",
+                                        color = Color(0xFF2B2D32),
+                                        fontSize = 13.sp,
+                                        lineHeight = 18.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    "Visualization" -> {
+                        item {
+                            SettingChipSelectorRow(
+                                title = "Active Visualization Preset",
+                                options = controller.visPresets.map { it.name },
+                                selected = controller.currentVisPreset.name,
+                                onSelect = { name ->
+                                    val idx = controller.visPresets.indexOfFirst { it.name == name }
+                                    if (idx >= 0) controller.currentVisPresetIndex = idx
+                                }
+                            )
+                        }
+                        item {
+                            SettingSliderRow(
+                                title = "Faded Controls Opacity",
+                                displayValue = "${(controller.visFadedControlsOpacity * 100).toInt()}%",
+                                fraction = controller.visFadedControlsOpacity,
+                                onFractionChange = { controller.visFadedControlsOpacity = it.coerceIn(0.10f, 1f) }
+                            )
+                        }
+                        item {
+                            SettingChipSelectorRow(
+                                title = "Preset Auto-Switch Duration",
+                                options = listOf("5s", "10s", "15s", "30s", "Manual"),
+                                selected = when (controller.visPresetDurationSec) {
+                                    5 -> "5s"
+                                    10 -> "10s"
+                                    15 -> "15s"
+                                    30 -> "30s"
+                                    else -> "Manual"
+                                },
+                                onSelect = { sel ->
+                                    controller.visPresetDurationSec = when (sel) {
+                                        "5s" -> 5
+                                        "10s" -> 10
+                                        "15s" -> 15
+                                        "30s" -> 30
+                                        else -> 0
+                                    }
+                                }
+                            )
+                        }
+                        item {
+                            SettingChipSelectorRow(
+                                title = "Rendering Frame Rate Target",
+                                options = listOf("30 FPS", "60 FPS (Ultra Smooth)"),
+                                selected = if (controller.visFpsTarget == 60) "60 FPS (Ultra Smooth)" else "30 FPS",
+                                onSelect = { controller.visFpsTarget = if (it.startsWith("60")) 60 else 30 }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Show Preset Notification Toast",
+                                subtitle = "Popup banner when preset changes automatically",
+                                checked = controller.visShowPresetToast,
+                                onCheckedChange = { controller.visShowPresetToast = it }
+                            )
+                        }
+                    }
+
+                    "Background" -> {
+                        item {
+                            SettingChipSelectorRow(
+                                title = "Background Appearance",
+                                options = listOf("Pure Black (OLED)", "Album Art Blur", "Blurred Mountain Glow"),
+                                selected = controller.backgroundType,
+                                onSelect = { controller.backgroundType = it }
+                            )
+                        }
+                        item {
+                            SettingSliderRow(
+                                title = "Blur Intensity",
+                                displayValue = "${(controller.backgroundBlurRadius * 100).toInt()}%",
+                                fraction = controller.backgroundBlurRadius,
+                                onFractionChange = { controller.backgroundBlurRadius = it }
+                            )
+                        }
+                        item {
+                            SettingSliderRow(
+                                title = "Background Saturation",
+                                displayValue = "${(controller.backgroundSaturation * 100).toInt()}%",
+                                fraction = controller.backgroundSaturation / 2f,
+                                onFractionChange = { controller.backgroundSaturation = it * 2f }
+                            )
+                        }
+                        item {
+                            SettingSliderRow(
+                                title = "Dim Behind Controls",
+                                displayValue = "${(controller.backgroundDimOpacity * 100).toInt()}%",
+                                fraction = controller.backgroundDimOpacity / 0.8f,
+                                onFractionChange = { controller.backgroundDimOpacity = it * 0.8f }
+                            )
+                        }
+                    }
+
+                    "Album Art" -> {
+                        item {
+                            SettingToggleRow(
+                                title = "Download High-Res Artwork",
+                                subtitle = "Fetch high resolution 1000x1000 cover art",
+                                checked = controller.highResAlbumArt,
+                                onCheckedChange = { controller.highResAlbumArt = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Prefer Embedded ID3 Art",
+                                subtitle = "Prioritize artwork embedded inside audio files",
+                                checked = controller.preferEmbeddedArt,
+                                onCheckedChange = { controller.preferEmbeddedArt = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Album Art on Lock Screen",
+                                subtitle = "Show cover on lockscreen with media controls",
+                                checked = controller.albumArtOnLockscreen,
+                                onCheckedChange = { controller.albumArtOnLockscreen = it }
+                            )
+                        }
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color.White)
+                                    .clickable {
+                                        controller.showToast("Cache Cleared", "Album art temporary files removed")
+                                    }
+                                    .padding(16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Clear Album Art Cache", color = Color(0xFFD32F2F), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            }
+                        }
+                    }
+
+                    "Library" -> {
+                        item {
+                            Text("MUSIC FOLDERS", color = Color(0xFF38538A), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                        items(listOf("/sdcard/Music", "/sdcard/Download", "/sdcard/Podcasts")) { path ->
+                            val isChecked = controller.selectedMusicFolders.contains(path)
+                            SettingToggleRow(
+                                title = path,
+                                subtitle = if (isChecked) "Folder included in library scan" else "Excluded",
+                                checked = isChecked,
+                                onCheckedChange = {
+                                    if (isChecked) controller.selectedMusicFolders.remove(path)
+                                    else controller.selectedMusicFolders.add(path)
+                                }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Auto-Scan on Startup",
+                                subtitle = "Check for newly added tracks when app opens",
+                                checked = controller.autoScanOnStartup,
+                                onCheckedChange = { controller.autoScanOnStartup = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Ignore Short Tracks (< 30s)",
+                                subtitle = "Filter out voice notes, ringtones and alarms",
+                                checked = controller.ignoreShortTracks,
+                                onCheckedChange = { controller.ignoreShortTracks = it }
+                            )
+                        }
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(Color(0xFF38538A))
+                                    .clickable {
+                                        controller.scanMediaLibrary()
+                                        controller.showToast("Library Rescanned", "${controller.allTracks.size} tracks indexed")
+                                    }
+                                    .padding(vertical = 14.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Full Rescan Media Library Now", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            }
+                        }
+                    }
+
+                    "Headset/Bluetooth" -> {
+                        item {
+                            SettingToggleRow(
+                                title = "Resume on Headset Connect",
+                                subtitle = "Auto-resume playback when headphones plugged in",
+                                checked = controller.resumeOnHeadsetConnect,
+                                onCheckedChange = { controller.resumeOnHeadsetConnect = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Pause on Headset Disconnect",
+                                subtitle = "Safely pause playback when unplugged",
+                                checked = controller.pauseOnHeadsetDisconnect,
+                                onCheckedChange = { controller.pauseOnHeadsetDisconnect = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Headset Buttons Control",
+                                subtitle = "Single click Play/Pause, double click Next Track",
+                                checked = controller.headsetButtonsEnabled,
+                                onCheckedChange = { controller.headsetButtonsEnabled = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Bluetooth Direct Volume Control",
+                                subtitle = "Hardware volume tracking over Bluetooth A2DP",
+                                checked = controller.bluetoothDvcEnabled,
+                                onCheckedChange = { controller.bluetoothDvcEnabled = it }
+                            )
+                        }
+                    }
+
+                    "Misc" -> {
+                        item {
+                            SettingToggleRow(
+                                title = "Android Auto Support",
+                                subtitle = "Display optimized automotive player interface",
+                                checked = controller.androidAutoEnabled,
+                                onCheckedChange = { controller.androidAutoEnabled = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Scrobble with Last.fm",
+                                subtitle = "Broadcast tracks to Simple Last.fm Scrobbler",
+                                checked = controller.scrobblingEnabled,
+                                onCheckedChange = { controller.scrobblingEnabled = it }
+                            )
+                        }
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color.White)
+                                    .clickable {
+                                        controller.showToast("Settings Exported", "Backup saved to internal storage")
+                                    }
+                                    .padding(16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Export Settings & Presets Backup", color = Color(0xFF18191B), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            }
+                        }
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color(0xFFFFEBEE))
+                                    .clickable {
+                                        controller.resetSettingsToDefault()
+                                    }
+                                    .padding(16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Reset All Settings to Factory Default", color = Color(0xFFC62828), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            }
+                        }
+                    }
+
+                    "About" -> {
+                        item {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(Color.White)
+                                    .padding(20.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "POWERAMP",
+                                    color = Color(0xFF141518),
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.Black,
+                                    fontStyle = FontStyle.Italic,
+                                    letterSpacing = 1.2.sp
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "build-1013-uni (Full Version)",
+                                    color = Color(0xFF38538A),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(Color(0xFFE8F5E9))
+                                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                                ) {
+                                    Text("✓ Lifetime License Activated", color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                }
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Text(
+                                    text = "Audiophile 64-bit float DSP audio engine with custom 10-band graphic/parametric equalizer, dynamic Waveseek navigation, real-time visualization, and Direct Volume Control (DVC).",
+                                    color = Color(0xFF555860),
+                                    fontSize = 13.sp,
+                                    lineHeight = 19.sp
+                                )
+                            }
+                        }
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color.White)
+                                    .clickable { controller.showChangelogDialog = true }
+                                    .padding(16.dp)
+                            ) {
+                                Text("View Engine Changelog", color = Color(0xFF18191B), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            }
+                        }
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color.White)
+                                    .clickable { controller.showHelpDialog = true }
+                                    .padding(16.dp)
+                            ) {
+                                Text("Help & FAQ", color = Color(0xFF18191B), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(vertical = 12.dp)
+            ) {
+                item {
+                    Text(
+                        text = "Settings",
+                        color = Color(0xFF38538A),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                }
+
+                val itemsList = listOf(
+                    Triple("Look and Feel", "Skin, player interface, language, notifications", Color(0xFF8380B6) to Icons.Filled.Layers),
+                    Triple("Audio", "Crossfade, replay gain, volume, output", Color(0xFFC36A84) to Icons.Filled.VolumeUp),
+                    Triple("Visualization", "Faded controls opacity, preset duration", Color(0xFF9167C2) to Icons.Filled.GraphicEq),
+                    Triple("Background", "Blur, details, intensity, saturation", Color(0xFF5D8F8D) to Icons.Filled.Wallpaper),
+                    Triple("Album Art", "Download, quality, cache cleanup", Color(0xFF6B9964) to Icons.Filled.Image),
+                    Triple("Library", "Rescan, music folders, list, queue options", Color(0xFF5A739C) to Icons.Filled.Folder),
+                    Triple("Headset/Bluetooth", "Resume on connection, buttons, DVC per output", Color(0xFF4F87A8) to Icons.Filled.Tune),
+                    Triple("Misc", "Tweaks, export/import settings, battery optimization", Color(0xFF7B808A) to Icons.Filled.Settings),
+                    Triple("About", "Poweramp build-1013-uni (Full Version)", Color(0xFF5C6B73) to Icons.Filled.Info)
+                )
+
+                items(itemsList) { (title, summary, colorAndIcon) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { activeSubSetting = title }
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = colorAndIcon.second,
+                            contentDescription = title,
+                            tint = colorAndIcon.first,
+                            modifier = Modifier.size(30.dp)
+                        )
+                        Spacer(modifier = Modifier.width(24.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = title,
+                                color = Color(0xFF141518),
+                                fontSize = 19.sp,
+                                fontWeight = FontWeight.Normal
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = summary,
+                                color = Color(0xFF52545A),
+                                fontSize = 13.5.sp
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White)
+            .clickable { onCheckedChange(!checked) }
+            .padding(14.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = Color(0xFF18191B), fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(subtitle, color = Color(0xFF5D6066), fontSize = 12.5.sp)
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
+private fun SettingSliderRow(
+    title: String,
+    displayValue: String,
+    fraction: Float,
+    onFractionChange: (Float) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White)
+            .padding(14.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(title, color = Color(0xFF18191B), fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold)
+            Text(displayValue, color = Color(0xFF38538A), fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Slider(
+            value = fraction.coerceIn(0f, 1f),
+            onValueChange = onFractionChange,
+            colors = SliderDefaults.colors(
+                thumbColor = Color(0xFF38538A),
+                activeTrackColor = Color(0xFF38538A),
+                inactiveTrackColor = Color(0xFFDCDFE6)
+            )
+        )
+    }
+}
+
+@Composable
+private fun SettingChipSelectorRow(
+    title: String,
+    options: List<String>,
+    selected: String,
+    onSelect: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White)
+            .padding(14.dp)
+    ) {
+        Text(title, color = Color(0xFF18191B), fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(modifier = Modifier.height(10.dp))
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(options) { opt ->
+                val isSelected = opt == selected
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (isSelected) Color(0xFF38538A) else Color(0xFFE8EAF0))
+                        .clickable { onSelect(opt) }
+                        .padding(horizontal = 14.dp, vertical = 7.dp)
+                ) {
+                    Text(
+                        text = opt,
+                        color = if (isSelected) Color.White else Color(0xFF2C2E33),
+                        fontSize = 13.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 9. Poweramp Toast Banner (`14_vis_panel.png`).
+ */
+@Composable
+fun PowerampToastOverlay(
+    title: String,
+    subtitle: String?,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .padding(horizontal = 22.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(28.dp))
+            .background(Color(0xEE2B2C30))
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Filled.GraphicEq,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.width(14.dp))
+        Column {
+            Text(
+                text = title,
+                color = Color.White,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    color = Color(0xFFD8DADF),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 10. Simple Info Modal for Changelog, Help, and Album Art Selector.
+ */
+@Composable
+fun PowerampSimpleInfoDialog(
+    title: String,
+    body: String,
+    onDismiss: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xAA000000))
+            .clickable { onDismiss() },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 24.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(26.dp))
+                .background(PowerampDialogBg)
+                .clickable(enabled = false) {}
+                .padding(22.dp)
+        ) {
+            Text(title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(body, color = Color(0xFFD2D4D8), fontSize = 14.sp, lineHeight = 20.sp)
+            Spacer(modifier = Modifier.height(18.dp))
+            Box(
+                modifier = Modifier
+                    .align(Alignment.End)
+                    .height(38.dp)
+                    .clip(RoundedCornerShape(19.dp))
+                    .background(Color(0xFF4F5156))
+                    .clickable { onDismiss() }
+                    .padding(horizontal = 22.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("OK", color = Color.White, fontWeight = FontWeight.ExtraBold)
+            }
+        }
+    }
+}
