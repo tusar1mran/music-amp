@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -42,19 +44,29 @@ class MainActivity : ComponentActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
-        if (controller.allTracks.isEmpty()) {
-            controller.scanMediaLibrary()
-        }
+        // Permission just changed: rescan so the library appears without restarting the app
+        controller.scanMediaLibrary()
+    }
+
+    // RECORD_AUDIO is only used by the visualizer to read this app's own output (nothing is recorded)
+    private val recordPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) controller.refreshVisualizer()
+        else controller.showToast("Visualization", "Microphone permission is needed for the live spectrum")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = android.graphics.Color.BLACK
-        window.navigationBarColor = android.graphics.Color.BLACK
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        insetsController.isAppearanceLightStatusBars = false
 
-        controller = PowerampController(applicationContext)
+        // The controller lives in the Application so playback survives the Activity being closed
+        controller = (application as PowerampApp).controller
+        controller.recordPermissionRequester = { recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
         requestAudioPermissionsIfNeeded()
 
         onBackPressedDispatcher.addCallback(
@@ -91,14 +103,27 @@ class MainActivity : ComponentActivity() {
         )
 
         setContent {
+            val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
+            SideEffect { AppTheme.systemDark = systemDark }
+            val dark = AppTheme.isDark
+            val bg = PowerampBg
+            // Navigation bar follows the theme; status bar stays transparent over the accent header
+            SideEffect {
+                window.navigationBarColor = bg.toArgb()
+                WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightNavigationBars = !dark
+            }
             MaterialTheme(
-                colorScheme = darkColorScheme(
-                    background = PowerampBg,
-                    surface = PowerampSurface,
-                    primary = PowerampNeonGreen,
-                    onBackground = Color.White,
-                    onSurface = Color.White
-                )
+                colorScheme = if (dark) {
+                    androidx.compose.material3.darkColorScheme(
+                        background = bg, surface = PowerampSurface, primary = ThemeBerryPrimary, onPrimary = PowerampOnAccent,
+                        onBackground = PowerampTextPrimary, onSurface = PowerampTextPrimary
+                    )
+                } else {
+                    androidx.compose.material3.lightColorScheme(
+                        background = bg, surface = PowerampSurface, primary = ThemeBerryPrimary, onPrimary = PowerampOnAccent,
+                        onBackground = PowerampTextPrimary, onSurface = PowerampTextPrimary
+                    )
+                }
             ) {
                 PowerampRootApp(controller = controller)
             }
@@ -116,14 +141,27 @@ class MainActivity : ComponentActivity() {
                 perms.add(Manifest.permission.READ_EXTERNAL_STORAGE)
             }
         }
+        // Android 13+: needed for the playback notification / lock-screen controls
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            perms.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
         if (perms.isNotEmpty()) {
             permissionLauncher.launch(perms.toTypedArray())
         }
     }
 
     override fun onDestroy() {
+        // Don't keep a reference to a destroyed Activity inside the app-wide controller
+        controller.recordPermissionRequester = null
         super.onDestroy()
-        controller.releaseMediaPlayer()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Do NOT release the player here: music must keep playing in the background
+        controller.onAppStopped()
     }
 }
 
@@ -133,8 +171,6 @@ fun PowerampRootApp(controller: PowerampController) {
         modifier = Modifier
             .fillMaxSize()
             .background(PowerampBg)
-            .statusBarsPadding()
-            .navigationBarsPadding()
     ) {
         // Primary Content Screen with Poweramp's vertical expand/collapse & zoom-fade screen transitions
         AnimatedContent(
@@ -182,7 +218,16 @@ fun PowerampRootApp(controller: PowerampController) {
             }
         }
 
-        // Animated Overlays, Bottom Sheets & Modals
+        // Full-screen Settings Screen Layer
+        AnimatedVisibility(
+            visible = controller.showSettingsScreen,
+            enter = slideInVertically(tween(260, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(200)),
+            exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(180))
+        ) {
+            PowerampSettingsOverlay(controller = controller)
+        }
+
+        // Animated Overlays, Bottom Sheets & Modals (Drawn on top of screens and settings)
         AnimatedVisibility(
             visible = controller.showMainMenuSheet,
             enter = slideInVertically(tween(240, easing = FastOutSlowInEasing)) { it / 2 } + fadeIn(tween(200)),
@@ -259,13 +304,6 @@ fun PowerampRootApp(controller: PowerampController) {
                 body = "• Swipe left/right on Album Art or Mini-player to change track with slide animation\n• Drag across the Waveseek bars to scrub track position\n• Double-tap any Rotary Knob or EQ Slider to reset to 0.0\n• Long-press any track in Library or Search for the Track Context Menu",
                 onDismiss = { controller.showHelpDialog = false }
             )
-        }
-        AnimatedVisibility(
-            visible = controller.showSettingsScreen,
-            enter = slideInVertically(tween(260, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(200)),
-            exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(180))
-        ) {
-            PowerampSettingsOverlay(controller = controller)
         }
 
         // Poweramp Bottom Toast Notification Banner (`14_vis_panel.png`) with slide + fade animation

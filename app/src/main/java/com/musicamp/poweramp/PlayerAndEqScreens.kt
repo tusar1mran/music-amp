@@ -37,7 +37,9 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Equalizer
@@ -50,12 +52,17 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.ThumbDown
 import androidx.compose.material.icons.outlined.ThumbUp
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -65,6 +72,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -106,656 +114,301 @@ fun PowerampPlayerScreen(
             .fillMaxSize()
             .background(PowerampBg)
     ) {
-        // 1. Large Album Art, Top Visualization Preset Bar & Rating / 3-dot Menu Overlay Area
+        // 1. TOP CURVED BERRY HEADER & ALBUM ART CAROUSEL
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
-                .pointerInput(Unit) {
-                    var totalDx = 0f
-                    detectHorizontalDragGestures(
-                        onDragStart = { totalDx = 0f },
-                        onDragEnd = {
-                            if (totalDx > 110f) {
-                                controller.previousTrack()
-                            } else if (totalDx < -110f) {
-                                controller.nextTrack()
-                            }
-                        },
-                        onHorizontalDrag = { change, dragAmount ->
-                            change.consume()
-                            totalDx += dragAmount
-                        }
-                    )
-                }
+                .weight(1.30f)
         ) {
-            // Smooth horizontal track slide + scale animation when switching songs
-            AnimatedContent(
-                targetState = track?.id ?: 0L,
-                transitionSpec = {
-                    val dir = controller.trackTransitionDirection
-                    (slideInHorizontally(
-                        animationSpec = tween(320, easing = FastOutSlowInEasing),
-                        initialOffsetX = { fullWidth -> dir * (fullWidth / 2) }
-                    ) + fadeIn(tween(260)) + scaleIn(initialScale = 0.92f, animationSpec = tween(320)))
-                        .togetherWith(
-                            slideOutHorizontally(
-                                animationSpec = tween(280, easing = FastOutSlowInEasing),
-                                targetOffsetX = { fullWidth -> -dir * (fullWidth / 2) }
-                            ) + fadeOut(tween(220)) + scaleOut(targetScale = 0.92f, animationSpec = tween(280))
-                        )
-                },
-                label = "albumArtSlideTransition"
-            ) { _ ->
-                PowerampMountainArtwork(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    visMode = controller.visMode,
-                    visPresetId = controller.currentVisPreset.id,
-                    visPhase = controller.visPhase,
-                    isPlaying = controller.isPlaying,
-                    spectrumBars = controller.liveSpectrumAmplitudes
-                )
-            }
-
-            // Top Floating Visualization Preset Selector Bar (`02_playing_t1.png`: "spectrum-centered Built-in")
-            androidx.compose.animation.AnimatedVisibility(
-                visible = controller.visMode != VisMode.DISABLED && controller.showVisPresetBar,
-                enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(tween(220)),
-                exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(tween(180)),
+            // Berry Gradient Backdrop with curved bottom matching reference design
+            Box(
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.60f)
+                    .clip(RoundedCornerShape(bottomStart = 38.dp, bottomEnd = 38.dp))
+                    .background(ThemeBerryHeaderGradient)
+                    .statusBarsPadding()
             ) {
+                // Header Top Navigation Row: Back < | "Now Playing" | Tune/EQ
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                        .background(Color(0xEE1A1B1E))
-                        .pointerInput(Unit) {
-                            var dx = 0f
-                            detectHorizontalDragGestures(
-                                onDragStart = { dx = 0f },
-                                onDragEnd = {
-                                    if (dx > 60f) controller.prevVisPreset()
-                                    else if (dx < -60f) controller.nextVisPreset()
-                                },
-                                onHorizontalDrag = { change, dragAmount ->
-                                    change.consume()
-                                    dx += dragAmount
-                                }
-                            )
-                        }
-                        .clickable { controller.nextVisPreset() }
-                        .padding(horizontal = 14.dp),
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.GraphicEq,
-                        contentDescription = "Preset",
-                        tint = Color(0xFFB5B7BC),
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = controller.currentVisPreset.name,
-                            color = Color(0xFFD0D2D6),
-                            fontSize = 13.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = controller.currentVisPreset.category,
-                            color = Color(0xFFA0A2A7),
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                    }
-                    // Preset mode button (clock + arrow icon in `02_playing_t1.png`)
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(14.dp))
-                            .clickable { controller.cycleVisPresetMode() }
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    IconButton(
+                        onClick = {
+                            controller.currentMainTab = MainNavTab.LIBRARY
+                        },
+                        modifier = Modifier.size(40.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.Schedule,
-                            contentDescription = "Preset Mode",
-                            tint = Color(0xFFB5B7BC),
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Icon(
-                            imageVector = Icons.Filled.ArrowForward,
-                            contentDescription = null,
-                            tint = Color(0xFFB5B7BC),
-                            modifier = Modifier.size(15.dp)
+                            imageVector = Icons.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "Close Preset Bar",
-                        tint = Color(0xFFB5B7BC),
-                        modifier = Modifier
-                            .size(22.dp)
-                            .clickable { controller.showVisPresetBar = false }
+
+                    Text(
+                        text = "Now Playing",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
                     )
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = {
+                                controller.currentMainTab = MainNavTab.EQUALIZER
+                            },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Tune,
+                                contentDescription = "Equalizer",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                controller.showSettingsScreen = true
+                            },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Settings,
+                                contentDescription = "Settings",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
                 }
             }
 
-            // Bottom row of Album Art box: Like & Unlike pill buttons on left, 3-dot circle on right
-            Row(
+            // ALBUM ART CAROUSEL (Center card + left/right peek cards)
+            BerryAlbumArtCarousel(
+                controller = controller,
+                track = track,
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
-                    .alpha(controlsAlpha)
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val isLiked = track?.rating == 1
-                    val isUnliked = track?.rating == -1
-
-                    // Like pill button
-                    Box(
-                        modifier = Modifier
-                            .size(width = 52.dp, height = 38.dp)
-                            .clip(RoundedCornerShape(19.dp))
-                            .background(if (isLiked) Color(0xFF2C2E33) else Color(0xFF151618))
-                            .clickable { controller.toggleLikeCurrentTrack() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.ThumbUp,
-                            contentDescription = "Like",
-                            tint = if (isLiked) PowerampNeonGreen else Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    // Unlike pill button
-                    Box(
-                        modifier = Modifier
-                            .size(width = 52.dp, height = 38.dp)
-                            .clip(RoundedCornerShape(19.dp))
-                            .background(if (isUnliked) Color(0xFF2C2E33) else Color(0xFF151618))
-                            .clickable { controller.toggleUnlikeCurrentTrack() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.ThumbDown,
-                            contentDescription = "Unlike",
-                            tint = if (isUnliked) Color(0xFFFF5252) else Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-
-                // 3-dot Menu circular button
-                Box(
-                    modifier = Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF151618))
-                        .clickable {
-                            controller.actionTargetTrack = track
-                            controller.showTrackActionDialog = true
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.MoreVert,
-                        contentDescription = "Menu",
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
+                    .padding(top = 40.dp, bottom = 4.dp)
+            )
         }
 
-        // 2. Track Title Pill & Artist Pill (`01_current.png`) with animated track transition
-        AnimatedContent(
-            targetState = track,
-            transitionSpec = {
-                val dir = controller.trackTransitionDirection
-                (slideInHorizontally(tween(280)) { dir * it / 3 } + fadeIn(tween(240)))
-                    .togetherWith(slideOutHorizontally(tween(220)) { -dir * it / 3 } + fadeOut(tween(180)))
-            },
-            label = "trackTitleArtistSlide"
-        ) { currentTrackItem ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .alpha(controlsAlpha)
-                    .padding(horizontal = 14.dp, vertical = 4.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xFF121315))
-                        .clickable {
-                            controller.currentMainTab = MainNavTab.LIBRARY
-                            controller.activeLibraryCategory = LibraryCategory.ALL_SONGS
-                        }
-                        .padding(horizontal = 12.dp, vertical = 5.dp)
-                ) {
-                    Text(
-                        text = currentTrackItem?.title ?: "luminewave-this-is-home-637005.mp3",
-                        color = PowerampTextPrimary,
-                        fontSize = 19.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(2.dp))
-
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF121315))
-                        .clickable {
-                            controller.currentMainTab = MainNavTab.LIBRARY
-                            controller.activeLibraryCategory = LibraryCategory.ARTISTS
-                        }
-                        .padding(horizontal = 12.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = currentTrackItem?.artist ?: "Unknown artist",
-                        color = Color(0xFFE4E6EA),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // 3. Sub-AA Buttons Row: Visualization, Sleep Timer on Left | Repeat, Shuffle on Right (`01_current.png`)
+        // 2. METADATA ROW: Share Icon | Title & Artist | 3-Dot Menu
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp),
+                .padding(horizontal = 22.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Left group: Visualization + Sleep Timer
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Visualization pill button
-                Box(
-                    modifier = Modifier
-                        .size(width = 68.dp, height = 38.dp)
-                        .clip(RoundedCornerShape(19.dp))
-                        .background(Color(0xFF151618))
-                        .clickable { controller.cycleVisMode() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.GraphicEq,
-                        contentDescription = "Visualization",
-                        tint = if (controller.visMode != VisMode.DISABLED) Color.White else Color(0xFF8C8E93),
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-
-                // Sleep Timer pill button
-                Box(
-                    modifier = Modifier
-                        .size(width = 68.dp, height = 38.dp)
-                        .clip(RoundedCornerShape(19.dp))
-                        .background(Color(0xFF151618))
-                        .clickable { controller.showSleepTimerDialog = true },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Schedule,
-                            contentDescription = "Sleep Timer",
-                            tint = if (controller.sleepTimerMinutes > 0) PowerampNeonGreen else Color(0xFF8C8E93),
-                            modifier = Modifier.size(21.dp)
-                        )
-                        if (controller.sleepTimerMinutes > 0) {
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(
-                                text = "${(controller.sleepTimerRemainingSeconds / 60).coerceAtLeast(1)}m",
-                                color = PowerampNeonGreen,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
+            IconButton(
+                onClick = {
+                    track?.let { controller.shareTrack(it) }
+                },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Share,
+                    contentDescription = "Share",
+                    tint = PowerampTextSecondary,
+                    modifier = Modifier.size(22.dp)
+                )
             }
 
-            // Right group: Repeat + Shuffle
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Repeat pill button
-                Box(
-                    modifier = Modifier
-                        .size(width = 68.dp, height = 38.dp)
-                        .clip(RoundedCornerShape(19.dp))
-                        .background(Color(0xFF151618))
-                        .clickable { controller.cycleRepeatMode() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = if (controller.repeatMode == RepeatMode.REPEAT_SONG || controller.repeatMode == RepeatMode.SINGLE_SONG) {
-                            Icons.Filled.RepeatOne
-                        } else {
-                            Icons.Filled.Repeat
-                        },
-                        contentDescription = "Repeat",
-                        tint = if (controller.repeatMode != RepeatMode.OFF) Color(0xFFB0B2B7) else Color(0xFF55565A),
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = track?.title ?: "No music",
+                    color = PowerampTextPrimary,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = track?.artist ?: "No track",
+                    color = PowerampTextSecondary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
 
-                // Shuffle pill button
-                Box(
-                    modifier = Modifier
-                        .size(width = 68.dp, height = 38.dp)
-                        .clip(RoundedCornerShape(19.dp))
-                        .background(Color(0xFF151618))
-                        .clickable { controller.cycleShuffleMode() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Shuffle,
-                        contentDescription = "Shuffle",
-                        tint = if (controller.shuffleMode != ShuffleMode.OFF) Color.White else Color(0xFF8C8E93),
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
+            IconButton(
+                onClick = {
+                    controller.actionTargetTrack = track
+                    controller.showTrackActionDialog = true
+                },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.MoreVert,
+                    contentDescription = "Options",
+                    tint = PowerampTextSecondary,
+                    modifier = Modifier.size(22.dp)
+                )
             }
         }
 
-        // 4. Waveseek Scroller & Transport Controls Section (`01_current.png`, `02_playing_t1.png`, `04_playing_vis1.png`)
-        Box(
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // 3. TIME & SYMMETRICAL SOUNDWAVE WAVEFORM SECTION
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(215.dp)
+                .padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            // Dynamic Scrolling Waveform Seekbar spanning behind transport controls
-            PowerampWaveseekBar(
-                bars = track?.waveformBars ?: emptyList(),
-                progress = controller.progressFraction,
-                isPlaying = controller.isPlaying,
-                visPhase = controller.visPhase,
-                onSeek = { controller.seekToFraction(it) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(175.dp)
-                    .align(Alignment.Center)
+            Text(
+                text = elapsedStr,
+                color = Color(0xFF4A4E57),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
             )
 
-            // Dynamic Floating Seeking Indicator Badge
-            androidx.compose.animation.AnimatedVisibility(
-                visible = controller.isSeekingFwd || controller.isSeekingRwd,
-                enter = fadeIn(tween(140)) + scaleIn(initialScale = 0.85f),
-                exit = fadeOut(tween(140)) + scaleOut(targetScale = 0.85f),
+            // Symmetrical Waveform Bar in center
+            BerrySymmetricalWaveform(
+                bars = track?.waveformBars ?: emptyList(),
+                progress = controller.progressFraction,
+                onSeek = { controller.seekToFraction(it) },
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 18.dp)
+                    .weight(1f)
+                    .height(48.dp)
+                    .padding(horizontal = 10.dp)
+            )
+
+            Text(
+                text = durationStr,
+                color = Color(0xFF4A4E57),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // 4. TRANSPORT CONTROLS: Shuffle | Prev Track | Glowing Play/Pause | Next Track | Repeat
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Shuffle Button
+            val isShuffle = controller.shuffleMode != ShuffleMode.OFF
+            IconButton(
+                onClick = { controller.cycleShuffleMode() },
+                modifier = Modifier.size(44.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color(0xEE1E2024))
-                        .border(1.2.dp, PowerampNeonGreen, RoundedCornerShape(16.dp))
-                        .padding(horizontal = 16.dp, vertical = 6.dp)
-                ) {
-                    val deltaSec = (controller.seekingAccumulatedDeltaMs / 1000L).coerceAtLeast(0L)
-                    Text(
-                        text = if (controller.isSeekingFwd) "▸▸ FAST FORWARD  +${deltaSec}s" else "◂◂ FAST REWIND  -${deltaSec}s",
-                        color = PowerampNeonGreen,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 0.8.sp
-                    )
-                }
-            }
-
-            // 5 Transport Buttons overlaid horizontally: <<< (Prev Category), << (Prev Track), Play/Pause, >> (Next Track), >>> (Next Category)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.Center)
-                    .padding(horizontal = 36.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Prev Category (<<<)
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .clickable { controller.prevCategory() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "◂◂◂",
-                        color = Color(0xFF5C5E63),
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = (-2).sp
-                    )
-                }
-
-                // Previous Track (<<) - Tap skips/restarts, Press-and-hold seeks backward smoothly
-                Box(
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(CircleShape)
-                        .background(if (controller.isSeekingRwd) Color(0x3300FF19) else Color.Transparent)
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onPress = {
-                                    var isHeld = false
-                                    controller.seekingAccumulatedDeltaMs = 0L
-                                    val job = coroutineScope.launch {
-                                        delay(240)
-                                        isHeld = true
-                                        controller.isSeekingRwd = true
-                                        var holdElapsed = 0L
-                                        while (isActive) {
-                                            val step = when {
-                                                holdElapsed > 2500L -> 4000L
-                                                holdElapsed > 1000L -> 2000L
-                                                else -> 1000L
-                                            }
-                                            controller.seekingAccumulatedDeltaMs += step
-                                            controller.seekRelative(-step)
-                                            delay(80)
-                                            holdElapsed += 80
-                                        }
-                                    }
-                                    val released = tryAwaitRelease()
-                                    job.cancel()
-                                    controller.isSeekingRwd = false
-                                    if (!isHeld) {
-                                        controller.previousTrackOrRestart()
-                                    }
-                                }
-                            )
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.FastRewind,
-                        contentDescription = "Previous track",
-                        tint = if (controller.isSeekingRwd) PowerampNeonGreen else Color.White,
-                        modifier = Modifier.size(if (controller.isSeekingRwd) 46.dp else 42.dp)
-                    )
-                }
-
-                // Large Play / Pause Button with Poweramp's signature spring morph animation:
-                // Note: We keep the center area transparent to Waveseek drags except direct clicks on the button!
-                Box(
-                    modifier = Modifier
-                        .size(84.dp)
-                        .clip(CircleShape)
-                        .clickable { controller.togglePlayPause() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    AnimatedContent(
-                        targetState = controller.isPlaying,
-                        transitionSpec = {
-                            (scaleIn(initialScale = 0.45f, animationSpec = tween(220, easing = FastOutSlowInEasing)) +
-                                fadeIn(tween(180)))
-                                .togetherWith(
-                                    scaleOut(targetScale = 0.45f, animationSpec = tween(180)) +
-                                        fadeOut(tween(150))
-                                )
-                        },
-                        label = "playPauseMorph"
-                    ) { playing ->
-                        if (playing) {
-                            // Exact Poweramp double-pillar rounded Pause bars (`04_playing_vis1.png`)
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .width(12.dp)
-                                        .height(44.dp)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(Color.White)
-                                )
-                                Box(
-                                    modifier = Modifier
-                                        .width(12.dp)
-                                        .height(44.dp)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(Color.White)
-                                )
-                            }
-                        } else {
-                            Icon(
-                                imageVector = Icons.Filled.PlayArrow,
-                                contentDescription = "Play",
-                                tint = Color.White,
-                                modifier = Modifier.size(68.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Next Track (>>) - Tap skips track, Press-and-hold seeks forward smoothly
-                Box(
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(CircleShape)
-                        .background(if (controller.isSeekingFwd) Color(0x3300FF19) else Color.Transparent)
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onPress = {
-                                    var isHeld = false
-                                    controller.seekingAccumulatedDeltaMs = 0L
-                                    val job = coroutineScope.launch {
-                                        delay(240)
-                                        isHeld = true
-                                        controller.isSeekingFwd = true
-                                        var holdElapsed = 0L
-                                        while (isActive) {
-                                            val step = when {
-                                                holdElapsed > 2500L -> 4000L
-                                                holdElapsed > 1000L -> 2000L
-                                                else -> 1000L
-                                            }
-                                            controller.seekingAccumulatedDeltaMs += step
-                                            controller.seekRelative(+step)
-                                            delay(80)
-                                            holdElapsed += 80
-                                        }
-                                    }
-                                    val released = tryAwaitRelease()
-                                    job.cancel()
-                                    controller.isSeekingFwd = false
-                                    if (!isHeld) {
-                                        controller.nextTrack()
-                                    }
-                                }
-                            )
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.FastForward,
-                        contentDescription = "Next track",
-                        tint = if (controller.isSeekingFwd) PowerampNeonGreen else Color.White,
-                        modifier = Modifier.size(if (controller.isSeekingFwd) 46.dp else 42.dp)
-                    )
-                }
-
-                // Next Category (>>>)
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .clickable { controller.nextCategory() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "▸▸▸",
-                        color = Color(0xFF5C5E63),
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = (-2).sp
-                    )
-                }
-            }
-
-            // Elapsed time (bottom-left) & Track duration (bottom-right)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
-                    .padding(horizontal = 22.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = elapsedStr,
-                    color = PowerampTextPrimary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.ExtraBold
+                Icon(
+                    imageVector = Icons.Filled.Shuffle,
+                    contentDescription = "Shuffle",
+                    tint = if (isShuffle) ThemeBerryPrimary else PowerampIconStrong,
+                    modifier = Modifier.size(24.dp)
                 )
-                Text(
-                    text = durationStr,
-                    color = PowerampTextPrimary,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.ExtraBold
+            }
+
+            // Previous Track (<<)
+            IconButton(
+                onClick = { controller.previousTrackOrRestart() },
+                modifier = Modifier.size(52.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.SkipPrevious,
+                    contentDescription = "Previous Track",
+                    tint = PowerampIconStrong,
+                    modifier = Modifier.size(34.dp)
+                )
+            }
+
+            // Main Play/Pause Button with Berry Halo / Glow Ring
+            Box(
+                modifier = Modifier
+                    .size(76.dp)
+                    .clip(CircleShape)
+                    .background(ThemeBerryPrimary.copy(alpha = 0.16f)) // Outer glow ring
+                    .clickable { controller.togglePlayPause() },
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(60.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.linearGradient(
+                                listOf(ThemeBerryLight, ThemeBerryDark)
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (controller.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = "Play / Pause",
+                        tint = PowerampOnAccent,
+                        modifier = Modifier.size(34.dp)
+                    )
+                }
+            }
+
+            // Next Track (>>)
+            IconButton(
+                onClick = { controller.nextTrack() },
+                modifier = Modifier.size(52.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.SkipNext,
+                    contentDescription = "Next Track",
+                    tint = PowerampIconStrong,
+                    modifier = Modifier.size(34.dp)
+                )
+            }
+
+            // Repeat Button
+            val isRepeat = controller.repeatMode != RepeatMode.OFF
+            IconButton(
+                onClick = { controller.cycleRepeatMode() },
+                modifier = Modifier.size(44.dp)
+            ) {
+                Icon(
+                    imageVector = if (controller.repeatMode == RepeatMode.REPEAT_SONG || controller.repeatMode == RepeatMode.SINGLE_SONG) {
+                        Icons.Filled.RepeatOne
+                    } else {
+                        Icons.Filled.Repeat
+                    },
+                    contentDescription = "Repeat",
+                    tint = if (isRepeat) ThemeBerryPrimary else PowerampIconStrong,
+                    modifier = Modifier.size(24.dp)
                 )
             }
         }
 
-        // 5. Audio Meta Info Pill (`44.1 KHZ 256 KBPS MP3`)
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // 5. Audio Meta Info Pill
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 4.dp),
+                .padding(vertical = 2.dp),
             contentAlignment = Alignment.Center
         ) {
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF131416))
+                    .background(PowerampPillBg)
                     .clickable {
                         controller.actionTargetTrack = track
                         controller.showInfoTagsSheet = true
@@ -763,8 +416,8 @@ fun PowerampPlayerScreen(
                     .padding(horizontal = 12.dp, vertical = 3.dp)
             ) {
                 Text(
-                    text = track?.bottomBadgeInfo ?: "44.1 KHZ 256 KBPS MP3",
-                    color = Color(0xFFD2D4D8),
+                    text = track?.bottomBadgeInfo ?: "",
+                    color = PowerampTextSecondary,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 0.4.sp
@@ -792,20 +445,21 @@ fun PowerampEqualizerScreen(
         modifier = modifier
             .fillMaxSize()
             .background(PowerampBg)
+            .statusBarsPadding()
     ) {
         // Top Action Mode Bar: 3 Sub-Tabs (Equalizer Sliders Icon | Volume Knob Icon | Reverb Speaker Icon)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .padding(horizontal = 14.dp, vertical = 8.dp)
                 .height(48.dp)
                 .clip(RoundedCornerShape(24.dp))
-                .background(Color(0xFF18191B)),
+                .background(PowerampPillBg),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Sub-tab 1: Equalizer
             val eqActive = controller.currentEqSubTab == EqSubTab.EQUALIZER
-            val eqTint by animateColorAsState(if (eqActive) Color.White else Color(0xFF8E9095), label = "eqTabTint")
+            val eqTint by animateColorAsState(if (eqActive) ThemeBerryPrimary else Color(0xFF8E9095), label = "eqTabTint")
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -823,7 +477,7 @@ fun PowerampEqualizerScreen(
 
             // Sub-tab 2: Volume / Tempo / Balance / Stereo Expand (Rotary dial icon)
             val volActive = controller.currentEqSubTab == EqSubTab.VOLUME
-            val volTint by animateColorAsState(if (volActive) Color.White else Color(0xFF8E9095), label = "volTabTint")
+            val volTint by animateColorAsState(if (volActive) ThemeBerryPrimary else Color(0xFF8E9095), label = "volTabTint")
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -843,14 +497,14 @@ fun PowerampEqualizerScreen(
                             .padding(start = 5.dp, top = 5.dp)
                             .size(4.dp)
                             .clip(CircleShape)
-                            .background(Color.Black)
+                            .background(Color.White)
                     )
                 }
             }
 
             // Sub-tab 3: Reverb
             val revActive = controller.currentEqSubTab == EqSubTab.REVERB
-            val revTint by animateColorAsState(if (revActive) Color.White else Color(0xFF8E9095), label = "revTabTint")
+            val revTint by animateColorAsState(if (revActive) ThemeBerryPrimary else Color(0xFF8E9095), label = "revTabTint")
             Box(
                 modifier = Modifier
                     .weight(1f)

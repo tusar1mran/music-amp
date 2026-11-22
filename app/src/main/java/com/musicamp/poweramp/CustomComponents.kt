@@ -1,6 +1,11 @@
 package com.musicamp.poweramp
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,13 +26,18 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderCopy
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreHoriz
@@ -36,16 +46,22 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistPlay
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sensors
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.ThumbDown
 import androidx.compose.material.icons.filled.ThumbUp
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -64,6 +80,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,15 +94,6 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-val PowerampBg = Color(0xFF000000)
-val PowerampSurface = Color(0xFF141416)
-val PowerampPillBg = Color(0xFF1A1B1E)
-val PowerampDialogBg = Color(0xFF212226)
-val PowerampBorderGray = Color(0xFF424347)
-val PowerampNeonGreen = Color(0xFF00FF19)
-val PowerampNeonGlow = Color(0x6600FF19)
-val PowerampTextPrimary = Color(0xFFFFFFFF)
-val PowerampTextSecondary = Color(0xFF9EA0A5)
 
 /**
  * Draws the exact jagged mountain/lightning Poweramp cover placeholder artwork seen on Main Player,
@@ -270,6 +279,244 @@ fun PowerampMountainArtwork(
 }
 
 /**
+ * Loads the real cover art for [track] (embedded tag, else a cover/folder image next to the file)
+ * off the main thread. Returns null while loading or when the track has no artwork.
+ */
+@Composable
+fun rememberTrackArt(controller: PowerampController, track: AudioTrack?): ImageBitmap? {
+    val art by produceState<ImageBitmap?>(initialValue = null, track?.id) {
+        value = null
+        value = track?.let { controller.loadArt(it)?.asImageBitmap() }
+    }
+    return art
+}
+
+/** One artwork card: the real cover when present, otherwise a neutral gradient derived from the album name. */
+@Composable
+private fun ArtCard(
+    art: ImageBitmap?,
+    track: AudioTrack?,
+    corner: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier,
+    spectrum: List<Float>? = null,
+    iconSize: androidx.compose.ui.unit.Dp = 56.dp
+) {
+    val shape = RoundedCornerShape(corner)
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(Color(0xFF2A1520))
+            .border(1.dp, Color(0x33FFFFFF), shape)
+    ) {
+        if (art != null) {
+            Image(
+                bitmap = art,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            val seed = ((track?.album ?: "") + (track?.artist ?: "")).hashCode() and 0x7fffffff
+            val hue = (seed % 360).toFloat()
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.linearGradient(
+                            listOf(Color.hsv(hue, 0.55f, 0.40f), Color.hsv((hue + 40f) % 360f, 0.60f, 0.22f))
+                        )
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.MusicNote,
+                    contentDescription = null,
+                    tint = Color(0x99FFFFFF),
+                    modifier = Modifier.size(iconSize)
+                )
+            }
+        }
+        // Live spectrum overlay (long-press the artwork to switch visualization on / off)
+        if (spectrum != null) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        listOf(Color.Transparent, Color(0x66000000)),
+                        startY = size.height * 0.4f, endY = size.height
+                    )
+                )
+                val count = spectrum.size
+                if (count == 0) return@Canvas
+                val slot = size.width / count
+                val barW = (slot * 0.55f).coerceAtLeast(2.dp.toPx())
+                for (i in 0 until count) {
+                    val h = (spectrum[i].coerceIn(0f, 1f) * size.height * 0.55f).coerceAtLeast(2.dp.toPx())
+                    val x = i * slot + (slot - barW) / 2f
+                    drawRoundRect(
+                        color = Color.White.copy(alpha = 0.88f),
+                        topLeft = Offset(x, size.height - h - 6.dp.toPx()),
+                        size = Size(barW, h),
+                        cornerRadius = CornerRadius(barW / 2f, barW / 2f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Small square cover for list rows and dialogs: the real artwork when available, else a neutral placeholder. */
+@Composable
+fun TrackThumb(
+    controller: PowerampController,
+    track: AudioTrack?,
+    size: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier
+) {
+    val art = rememberTrackArt(controller, track)
+    ArtCard(
+        art = art,
+        track = track,
+        corner = (size.value * 0.2f).coerceIn(8f, 18f).dp,
+        modifier = modifier.size(size),
+        iconSize = size * 0.45f
+    )
+}
+
+/**
+ * Album art carousel: centre card with the current track's real artwork and peeking cards for the
+ * previous / next track. Swipe left or right to change track.
+ */
+@Composable
+fun BerryAlbumArtCarousel(
+    controller: PowerampController,
+    track: AudioTrack?,
+    modifier: Modifier = Modifier
+) {
+    val prevTrack = controller.peekPrevious()
+    val nextTrack = controller.peekNext()
+    val art = rememberTrackArt(controller, track)
+    val prevArt = rememberTrackArt(controller, prevTrack)
+    val nextArt = rememberTrackArt(controller, nextTrack)
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(215.dp)
+            .pointerInput(Unit) {
+                var totalDx = 0f
+                detectDragGestures(
+                    onDragStart = { totalDx = 0f },
+                    onDragEnd = {
+                        if (totalDx > 60f) {
+                            controller.previousTrackOrRestart()
+                        } else if (totalDx < -60f) {
+                            controller.nextTrack()
+                        }
+                    },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        totalDx += dragAmount.x
+                    }
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        ArtCard(
+            art = prevArt, track = prevTrack, corner = 16.dp,
+            modifier = Modifier.align(Alignment.CenterStart).offset(x = (-26).dp).size(155.dp)
+        )
+        ArtCard(
+            art = nextArt, track = nextTrack, corner = 16.dp,
+            modifier = Modifier.align(Alignment.CenterEnd).offset(x = 26.dp).size(155.dp)
+        )
+        ArtCard(
+            art = art, track = track, corner = 18.dp,
+            modifier = Modifier
+                .size(195.dp)
+                .pointerInput(Unit) { detectTapGestures(onLongPress = { controller.cycleVisMode() }) },
+            spectrum = if (controller.visMode != VisMode.DISABLED) controller.liveSpectrumAmplitudes else null
+        )
+    }
+}
+
+/**
+ * Symmetrical soundwave waveform matching the target Now Playing design from WhatsApp:
+ * Mirrored vertically around the horizontal center line, with berry played bars and light silver unplayed bars.
+ */
+@Composable
+fun BerrySymmetricalWaveform(
+    bars: List<Float>,
+    progress: Float,
+    onSeek: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val barAmplitudes = remember(bars) {
+        if (bars.isNotEmpty() && bars.size >= 36) {
+            // Pool down to at most 42 bars covering the WHOLE track (not just its first half)
+            val target = minOf(42, bars.size)
+            List(target) { i ->
+                val from = i * bars.size / target
+                val to = maxOf(from + 1, (i + 1) * bars.size / target)
+                bars.subList(from, to).average().toFloat()
+            }
+        } else {
+            // Symmetrical natural soundwave envelope shape
+            val count = 40
+            List(count) { i ->
+                val norm = i.toFloat() / (count - 1)
+                // Diamond audio burst envelope
+                val env = sin(norm * PI.toFloat()).coerceIn(0.25f, 1f)
+                val variation = 0.35f + 0.65f * ((i * 7 + 3) % 11) / 10f
+                (env * variation).coerceIn(0.2f, 0.95f)
+            }
+        }
+    }
+
+    Canvas(
+        modifier = modifier
+            .pointerInput(Unit) {
+                detectTapGestures { offset ->
+                    onSeek((offset.x / size.width).coerceIn(0f, 1f))
+                }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures { change, _ ->
+                    change.consume()
+                    onSeek((change.position.x / size.width).coerceIn(0f, 1f))
+                }
+            }
+    ) {
+        val w = size.width
+        val h = size.height
+        val centerY = h / 2f
+        val count = barAmplitudes.size
+        val gap = 3.dp.toPx()
+        val totalGaps = (count - 1) * gap
+        val barWidth = ((w - totalGaps) / count).coerceIn(2.5.dp.toPx(), 6.dp.toPx())
+        val actualTotalWidth = count * barWidth + (count - 1) * gap
+        val startX = (w - actualTotalWidth) / 2f
+
+        for (i in 0 until count) {
+            val bx = startX + i * (barWidth + gap)
+            val frac = (bx - startX) / actualTotalWidth
+            val isPlayed = frac <= progress.coerceIn(0f, 1f)
+
+            val amp = barAmplitudes[i]
+            val barHalfHeight = (h * 0.44f * amp).coerceAtLeast(3.dp.toPx())
+
+            val barColor = if (isPlayed) ThemeBerryAccent else ThemeWaveUnplayed
+
+            drawRoundRect(
+                color = barColor,
+                topLeft = Offset(bx, centerY - barHalfHeight),
+                size = Size(barWidth, barHalfHeight * 2f),
+                cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
+            )
+        }
+    }
+}
+
+/**
  * Poweramp Dynamic Waveseek Bar behind the transport buttons (`01_current.png`, `02_playing_t1.png`, `04_playing_vis1.png`).
  *
  * Authentic Poweramp playback animation:
@@ -440,25 +687,28 @@ fun PowerampRotaryKnob(
     bipolar: Boolean = false // true for Balance knob where 0.5f is top dead center (12 o'clock)
 ) {
     val currentOnValueChange by rememberUpdatedState(onValueChange)
+    val currentValue by rememberUpdatedState(value.coerceIn(0f, 1f))
     val density = LocalDensity.current
+    val haptics = LocalHapticFeedback.current
 
     var isDragging by remember { mutableStateOf(false) }
     var dragAccumulator by remember { mutableFloatStateOf(value.coerceIn(0f, 1f)) }
+    // Raw (un-detented) position of the finger-driven value, so the magnetic centre never "eats" movement
+    var rawAccumulator by remember { mutableFloatStateOf(value.coerceIn(0f, 1f)) }
+    // Gesture mode is decided ONCE at touch-down so it can never flip mid-drag (the cause of jitter).
+    var angularMode by remember { mutableStateOf(false) }
+    var inDetent by remember { mutableStateOf(false) }
 
-    // Smooth transition animation when updating via presets, double-tap reset, reset button, or tap
-    val animatedValue by animateFloatAsState(
-        targetValue = value.coerceIn(0f, 1f),
-        animationSpec = tween(
-            durationMillis = 300,
-            easing = FastOutSlowInEasing
-        ),
-        label = "knobSmoothTransition"
-    )
+    // Animated value for programmatic changes (presets, reset, tap). Snaps while the finger is down so the
+    // knob follows the touch with zero lag and never "springs back" on release.
+    val animated = remember { Animatable(value.coerceIn(0f, 1f)) }
+    LaunchedEffect(value, isDragging) {
+        val target = value.coerceIn(0f, 1f)
+        if (isDragging) animated.snapTo(target)
+        else animated.animateTo(target, tween(durationMillis = 220, easing = FastOutSlowInEasing))
+    }
 
-    // During active dragging, visual state tracks touch directly with zero latency (120fps fluid).
-    // During non-drag state updates, it transitions with a silky analog servo easing curve.
-    val effectiveValue = if (isDragging) dragAccumulator else animatedValue
-    val clamped = effectiveValue.coerceIn(0f, 1f)
+    val clamped = (if (isDragging) dragAccumulator else animated.value).coerceIn(0f, 1f)
 
     Box(
         modifier = modifier
@@ -466,56 +716,52 @@ fun PowerampRotaryKnob(
             .pointerInput(enabled, bipolar) {
                 if (!enabled) return@pointerInput
                 detectDragGestures(
-                    onDragStart = {
+                    onDragStart = { start ->
                         isDragging = true
-                        dragAccumulator = value.coerceIn(0f, 1f)
+                        dragAccumulator = currentValue
+                        rawAccumulator = currentValue
+                        inDetent = bipolar && kotlin.math.abs(currentValue - 0.5f) < 0.001f
+                        val cx = this.size.width.toFloat() / 2f
+                        val cy = this.size.height.toFloat() / 2f
+                        // Touches that begin on the outer ring behave like a real dial (circular motion);
+                        // touches in the middle use fine vertical drag. Fixed for the whole gesture.
+                        angularMode = kotlin.math.hypot(start.x - cx, start.y - cy) > cx * 0.55f
                     },
-                    onDragEnd = {
-                        isDragging = false
-                    },
-                    onDragCancel = {
-                        isDragging = false
-                    },
+                    onDragEnd = { isDragging = false },
+                    onDragCancel = { isDragging = false },
                     onDrag = { change, dragAmount ->
                         change.consume()
-                        val px = change.position.x
-                        val py = change.position.y
                         val cx = this.size.width.toFloat() / 2f
                         val cy = this.size.height.toFloat() / 2f
 
-                        // 1. Angular delta relative to knob center (rotary wheel movement)
-                        val prevPos = change.position - dragAmount
-                        val a1 = atan2((prevPos.y - cy).toDouble(), (prevPos.x - cx).toDouble()).toFloat()
-                        val a2 = atan2((py - cy).toDouble(), (px - cx).toDouble()).toFloat()
-                        var aDiff = a2 - a1
-                        while (aDiff > PI.toFloat()) aDiff -= (2f * PI.toFloat())
-                        while (aDiff < -PI.toFloat()) aDiff += (2f * PI.toFloat())
-
-                        val angularSweepRad = 290f * (PI.toFloat() / 180f)
-                        val angleDelta = aDiff / angularSweepRad
-
-                        // 2. High-precision vertical micro-drag delta (smooth linear dragging)
-                        // Calibrated: ~220dp of vertical travel covers the full 0% to 100% range
-                        val verticalDelta = -dragAmount.y / (density.density * 220f)
-
-                        // 3. Intelligent hybrid blend:
-                        // If user touches near rim and makes a circular tangential motion, use angular delta.
-                        // If user swipes vertically across knob or label, use vertical delta.
-                        val distFromCenter = kotlin.math.hypot(px - cx, py - cy)
-                        val isRimCircular = distFromCenter > (cx * 0.35f) && kotlin.math.abs(dragAmount.x) > kotlin.math.abs(dragAmount.y) * 0.55f
-                        val effectiveDelta = if (isRimCircular) angleDelta else verticalDelta
-
-                        var nextVal = (dragAccumulator + effectiveDelta).coerceIn(0f, 1f)
-
-                        // Magnetic center detent for bipolar knobs (Balance / Tone at 0.5)
-                        if (bipolar) {
-                            if (kotlin.math.abs(nextVal - 0.5f) < 0.022f) {
-                                nextVal = 0.5f
-                            }
+                        val effectiveDelta = if (angularMode) {
+                            val prevPos = change.position - dragAmount
+                            val a1 = atan2((prevPos.y - cy).toDouble(), (prevPos.x - cx).toDouble()).toFloat()
+                            val a2 = atan2((change.position.y - cy).toDouble(), (change.position.x - cx).toDouble()).toFloat()
+                            var aDiff = a2 - a1
+                            while (aDiff > PI.toFloat()) aDiff -= (2f * PI.toFloat())
+                            while (aDiff < -PI.toFloat()) aDiff += (2f * PI.toFloat())
+                            aDiff / (290f * (PI.toFloat() / 180f))
+                        } else {
+                            // ~200dp of vertical travel covers the full range
+                            -dragAmount.y / (density.density * 200f)
                         }
 
-                        dragAccumulator = nextVal
-                        currentOnValueChange(nextVal)
+                        rawAccumulator = (rawAccumulator + effectiveDelta).coerceIn(0f, 1f)
+                        var nextVal = rawAccumulator
+
+                        // Magnetic centre detent for bipolar knobs: snaps near 0.5 but releases smoothly
+                        if (bipolar) {
+                            val near = kotlin.math.abs(rawAccumulator - 0.5f) < 0.025f
+                            if (near) nextVal = 0.5f
+                            if (near && !inDetent) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            inDetent = near
+                        }
+
+                        if (nextVal != dragAccumulator) {
+                            dragAccumulator = nextVal
+                            currentOnValueChange(nextVal)
+                        }
                     }
                 )
             }
@@ -525,6 +771,7 @@ fun PowerampRotaryKnob(
                     onDoubleTap = {
                         val resetVal = if (bipolar) 0.5f else 0f
                         dragAccumulator = resetVal
+                        rawAccumulator = resetVal
                         currentOnValueChange(resetVal)
                     },
                     onTap = { offset ->
@@ -723,19 +970,22 @@ fun PowerampEqBandSlider(
     modifier: Modifier = Modifier
 ) {
     val currentOnValueChange by rememberUpdatedState(onValueChange)
+    val currentDb by rememberUpdatedState(dbValue.coerceIn(-15f, 15f))
+    val haptics = LocalHapticFeedback.current
     var isDragging by remember { mutableStateOf(false) }
     var dragDb by remember { mutableFloatStateOf(dbValue.coerceIn(-15f, 15f)) }
+    var rawDb by remember { mutableFloatStateOf(dbValue.coerceIn(-15f, 15f)) }
+    var inDetent by remember { mutableStateOf(false) }
 
-    val animatedDb by animateFloatAsState(
-        targetValue = dbValue.coerceIn(-15f, 15f),
-        animationSpec = tween(
-            durationMillis = 300,
-            easing = FastOutSlowInEasing
-        ),
-        label = "eqBandSliderSmooth"
-    )
+    // Snap while the finger is down (zero lag), glide for presets / reset / tap.
+    val animatedDbState = remember { Animatable(dbValue.coerceIn(-15f, 15f)) }
+    LaunchedEffect(dbValue, isDragging) {
+        val target = dbValue.coerceIn(-15f, 15f)
+        if (isDragging) animatedDbState.snapTo(target)
+        else animatedDbState.animateTo(target, tween(durationMillis = 220, easing = FastOutSlowInEasing))
+    }
 
-    val effectiveDb = if (isDragging) dragDb else animatedDb
+    val effectiveDb = if (isDragging) dragDb else animatedDbState.value
     val fraction = ((effectiveDb + 15f) / 30f).coerceIn(0f, 1f) // 0f = bottom (-15dB), 0.5f = center (0dB), 1f = top (+15dB)
 
     Column(
@@ -758,17 +1008,26 @@ fun PowerampEqBandSlider(
                     detectVerticalDragGestures(
                         onDragStart = {
                             isDragging = true
-                            dragDb = dbValue.coerceIn(-15f, 15f)
+                            dragDb = currentDb
+                            rawDb = currentDb
+                            inDetent = kotlin.math.abs(currentDb) < 0.001f
                         },
                         onDragEnd = { isDragging = false },
                         onDragCancel = { isDragging = false },
-                        onVerticalDrag = { change, _ ->
+                        onVerticalDrag = { change, dragAmount ->
                             change.consume()
-                            val h = size.height.toFloat().coerceAtLeast(1f)
-                            val newFrac = (1f - (change.position.y / h)).coerceIn(0f, 1f)
-                            val newDb = (newFrac * 30f - 15f)
-                            dragDb = newDb
-                            currentOnValueChange(newDb)
+                            // Relative drag: thumb moves exactly with the finger (track = height - 48dp padding)
+                            val trackPx = (size.height.toFloat() - 48.dp.toPx()).coerceAtLeast(40f)
+                            rawDb = (rawDb - dragAmount / trackPx * 30f).coerceIn(-15f, 15f)
+                            var newDb = rawDb
+                            val near = kotlin.math.abs(rawDb) < 0.35f
+                            if (near) newDb = 0f
+                            if (near && !inDetent) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            inDetent = near
+                            if (newDb != dragDb) {
+                                dragDb = newDb
+                                currentOnValueChange(newDb)
+                            }
                         }
                     )
                 }
@@ -777,13 +1036,16 @@ fun PowerampEqBandSlider(
                     detectTapGestures(
                         onDoubleTap = {
                             dragDb = 0f
+                            rawDb = 0f
                             currentOnValueChange(0f)
                         },
                         onTap = { offset ->
-                            val h = size.height.toFloat().coerceAtLeast(1f)
-                            val newFrac = (1f - (offset.y / h)).coerceIn(0f, 1f)
+                            val pad = 24.dp.toPx()
+                            val trackPx = (size.height.toFloat() - 2f * pad).coerceAtLeast(40f)
+                            val newFrac = (1f - ((offset.y - pad) / trackPx)).coerceIn(0f, 1f)
                             val newDb = (newFrac * 30f - 15f)
                             dragDb = newDb
+                            rawDb = newDb
                             currentOnValueChange(newDb)
                         }
                     )
@@ -998,10 +1260,9 @@ fun PowerampFrequencyResponseGraph(
 }
 
 /**
- * Floating Mini-Player + 4-Button Bottom Navigation Bar (`02_library.png`, `03_eq_tab1.png`, `04_search.png`).
- * On the main Player screen (`showMiniPlayer = false`), only the rounded 4-icon bottom navbar pill is shown.
- * On Library / Equalizer / Search / Lyrics screens (`showMiniPlayer = true`), the unified rounded container
- * includes the mini-player row + thin seekbar + 4 navigation icons.
+ * Modern 5-Button Bottom Navigation Bar matching the reference WhatsApp design:
+ * Clean white background with top shadow, Home (Berry active), Album, Center Raised Berry (+) Button,
+ * Playlist, Profile, and mini-player support.
  */
 @Composable
 fun PowerampBottomDock(
@@ -1013,49 +1274,30 @@ fun PowerampBottomDock(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(Color(0xFF18191B))
-            .padding(top = if (showMiniPlayer) 8.dp else 4.dp, bottom = 4.dp)
+            .background(PowerampBg)
+            .navigationBarsPadding()
     ) {
         if (showMiniPlayer && track != null) {
-            // Mini-player row: clicking opens Main Player screen, swiping left/right changes track with slide animation!
+            // Elegant Light Mini-Player Card
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .pointerInput(Unit) {
-                        var totalDx = 0f
-                        detectDragGestures(
-                            onDragStart = { totalDx = 0f },
-                            onDragEnd = {
-                                if (totalDx > 80f) {
-                                    controller.previousTrack()
-                                } else if (totalDx < -80f) {
-                                    controller.nextTrack()
-                                }
-                            },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                totalDx += dragAmount.x
-                            }
-                        )
-                    }
+                    .padding(horizontal = 14.dp, vertical = 6.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(PowerampSurface)
+                    .border(1.dp, PowerampBorderGray, RoundedCornerShape(16.dp))
                     .clickable {
                         controller.showLyricsScreen = false
                         controller.currentMainTab = MainNavTab.PLAYER
                     }
-                    .padding(horizontal = 14.dp, vertical = 4.dp),
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                PowerampMountainArtwork(
-                    modifier = Modifier.size(36.dp),
-                    visMode = controller.visMode,
-                    visPresetId = controller.currentVisPreset.id,
-                    visPhase = controller.visPhase,
-                    isPlaying = controller.isPlaying,
-                    spectrumBars = controller.liveSpectrumAmplitudes
-                )
+                // Mini artwork thumbnail (real cover when the file has one)
+                TrackThumb(controller, track, 42.dp)
+
                 Spacer(modifier = Modifier.width(12.dp))
+
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = track.title,
@@ -1067,174 +1309,203 @@ fun PowerampBottomDock(
                     )
                     Text(
                         text = track.artist,
-                        color = Color(0xFFD0D2D6),
+                        color = PowerampTextSecondary,
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+
                 Spacer(modifier = Modifier.width(8.dp))
+
+                // Mini Play/Pause Button
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(38.dp)
                         .clip(CircleShape)
+                        .background(ThemeBerryPrimary)
                         .clickable { controller.togglePlayPause() },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = if (controller.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                         contentDescription = "Play/Pause",
-                        tint = PowerampTextPrimary,
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
-            }
-
-            // Mini-player thin horizontal seekbar with grey pill thumb (`navbar_seekbar`)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(22.dp)
-                    .padding(horizontal = 16.dp)
-                    .pointerInput(Unit) {
-                        detectTapGestures { offset ->
-                            controller.seekToFraction((offset.x / size.width).coerceIn(0f, 1f))
-                        }
-                    }
-                    .pointerInput(Unit) {
-                        detectDragGestures { change, _ ->
-                            change.consume()
-                            controller.seekToFraction((change.position.x / size.width).coerceIn(0f, 1f))
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val w = size.width
-                    val h = size.height
-                    val cy = h / 2f
-                    val trackH = 10.dp.toPx()
-
-                    // Dark rounded track
-                    drawRoundRect(
-                        color = Color(0xFF232427),
-                        topLeft = Offset(0f, cy - trackH / 2f),
-                        size = Size(w, trackH),
-                        cornerRadius = CornerRadius(trackH / 2f, trackH / 2f)
-                    )
-
-                    // Pill thumb
-                    val thumbW = 18.dp.toPx()
-                    val thumbH = 10.dp.toPx()
-                    val thumbX = (controller.progressFraction * (w - thumbW)).coerceIn(0f, (w - thumbW).coerceAtLeast(0f))
-                    drawRoundRect(
-                        color = Color(0xFF8C8E93),
-                        topLeft = Offset(thumbX, cy - thumbH / 2f),
-                        size = Size(thumbW, thumbH),
-                        cornerRadius = CornerRadius(thumbH / 2f, thumbH / 2f)
+                        tint = PowerampOnAccent,
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }
         }
 
-        // 4 Navigation Buttons Row: Library (2x2 grid), Equ/Effects (3 bars), Search (Magnifier), Main Menu (3 thick bars)
-        Row(
+        // 5-Item Navigation Bar: Home | Album | (+) Raised Berry Button | Playlist | Profile
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
+                .height(64.dp)
+                .background(PowerampBg)
+                .border(width = 0.8.dp, color = PowerampBorderGray),
+            contentAlignment = Alignment.Center
         ) {
-            val isLibActive = controller.currentMainTab == MainNavTab.LIBRARY && !controller.showMainMenuSheet
-            val isEqActive = controller.currentMainTab == MainNavTab.EQUALIZER && !controller.showMainMenuSheet
-            val isSearchActive = controller.currentMainTab == MainNavTab.SEARCH && !controller.showMainMenuSheet
-            val isMenuActive = controller.showMainMenuSheet
-
-            // 1. Library button (4 rounded squares grid)
-            Box(
+            Row(
                 modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .clickable {
-                        controller.showMainMenuSheet = false
-                        controller.showLyricsScreen = false
-                        if (controller.currentMainTab == MainNavTab.LIBRARY && controller.activeLibraryCategory != null) {
-                            if (controller.activeSubFilter != null) {
-                                controller.activeSubFilter = null
-                            } else {
-                                controller.activeLibraryCategory = null
-                            }
-                        } else {
+                    .fillMaxWidth()
+                    .fillMaxHeight(),
+                horizontalArrangement = Arrangement.SpaceAround,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val isHomeActive = controller.currentMainTab == MainNavTab.LIBRARY && controller.activeLibraryCategory == null
+                val isAlbumActive = controller.currentMainTab == MainNavTab.LIBRARY && controller.activeLibraryCategory == LibraryCategory.ALBUMS
+                val isPlaylistActive = controller.currentMainTab == MainNavTab.LIBRARY && controller.activeLibraryCategory == LibraryCategory.PLAYLISTS
+
+                // 1. Home Button
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clickable {
+                            controller.showMainMenuSheet = false
+                            controller.showLyricsScreen = false
+                            controller.activeLibraryCategory = null
+                            controller.activeSubFilter = null
                             controller.currentMainTab = MainNavTab.LIBRARY
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.GridView,
-                    contentDescription = "Library",
-                    tint = if (isLibActive) Color.White else Color(0xFF9EA0A5),
-                    modifier = Modifier.size(26.dp)
-                )
-            }
+                        },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Home,
+                        contentDescription = "Home",
+                        tint = if (isHomeActive) ThemeBerryPrimary else Color(0xFF8A8E99),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Home",
+                        color = if (isHomeActive) ThemeBerryPrimary else Color(0xFF8A8E99),
+                        fontSize = 11.sp,
+                        fontWeight = if (isHomeActive) FontWeight.Bold else FontWeight.Medium
+                    )
+                }
 
-            // 2. Equalizer / Effects button (3 vertical bars)
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .clickable {
-                        controller.showMainMenuSheet = false
-                        controller.showLyricsScreen = false
-                        controller.currentMainTab = MainNavTab.EQUALIZER
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Equalizer,
-                    contentDescription = "Equ/Effects",
-                    tint = if (isEqActive) Color.White else Color(0xFF9EA0A5),
-                    modifier = Modifier.size(28.dp)
-                )
-            }
+                // 2. Album Button
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clickable {
+                            controller.showMainMenuSheet = false
+                            controller.showLyricsScreen = false
+                            controller.activeSubFilter = null
+                            controller.activeLibraryCategory = LibraryCategory.ALBUMS
+                            controller.currentMainTab = MainNavTab.LIBRARY
+                        },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Album,
+                        contentDescription = "Album",
+                        tint = if (isAlbumActive) ThemeBerryPrimary else Color(0xFF8A8E99),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Album",
+                        color = if (isAlbumActive) ThemeBerryPrimary else Color(0xFF8A8E99),
+                        fontSize = 11.sp,
+                        fontWeight = if (isAlbumActive) FontWeight.Bold else FontWeight.Medium
+                    )
+                }
 
-            // 3. Search button
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .clickable {
-                        controller.showMainMenuSheet = false
-                        controller.showLyricsScreen = false
-                        controller.currentMainTab = MainNavTab.SEARCH
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Search,
-                    contentDescription = "Search",
-                    tint = if (isSearchActive) Color.White else Color(0xFF9EA0A5),
-                    modifier = Modifier.size(28.dp)
-                )
-            }
+                // 3. Center raised Equalizer button (opens the Equalizer / Volume / Reverb screen)
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val eqActive = controller.currentMainTab == MainNavTab.EQUALIZER && !controller.showSettingsScreen
+                    Box(
+                        modifier = Modifier
+                            .offset(y = (-6).dp)
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(ThemeBerryPrimary)
+                            .border(if (eqActive) 3.dp else 0.dp, PowerampTextPrimary.copy(alpha = 0.55f), CircleShape)
+                            .clickable {
+                                controller.showLyricsScreen = false
+                                controller.showSettingsScreen = false
+                                controller.showMainMenuSheet = false
+                                controller.currentMainTab = MainNavTab.EQUALIZER
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Equalizer,
+                            contentDescription = "Equalizer",
+                            tint = PowerampOnAccent,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                }
 
-            // 4. Main Menu button (3 thick rounded horizontal bars)
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .clickable {
-                        controller.showMainMenuSheet = !controller.showMainMenuSheet
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Menu,
-                    contentDescription = "Main Menu",
-                    tint = if (isMenuActive) Color.White else Color(0xFF9EA0A5),
-                    modifier = Modifier.size(28.dp)
-                )
+                // 4. Playlist Button
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clickable {
+                            controller.showMainMenuSheet = false
+                            controller.showLyricsScreen = false
+                            controller.activeSubFilter = null
+                            controller.activeLibraryCategory = LibraryCategory.PLAYLISTS
+                            controller.currentMainTab = MainNavTab.LIBRARY
+                        },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.QueueMusic,
+                        contentDescription = "Playlist",
+                        tint = if (isPlaylistActive) ThemeBerryPrimary else Color(0xFF8A8E99),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Playlist",
+                        color = if (isPlaylistActive) ThemeBerryPrimary else Color(0xFF8A8E99),
+                        fontSize = 11.sp,
+                        fontWeight = if (isPlaylistActive) FontWeight.Bold else FontWeight.Medium
+                    )
+                }
+
+                // 5. Settings Button
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clickable {
+                            controller.showLyricsScreen = false
+                            controller.showSettingsScreen = true
+                        },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = "Settings",
+                        tint = if (controller.showSettingsScreen) ThemeBerryPrimary else Color(0xFF8A8E99),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Settings",
+                        color = if (controller.showSettingsScreen) ThemeBerryPrimary else Color(0xFF8A8E99),
+                        fontSize = 11.sp,
+                        fontWeight = if (controller.showSettingsScreen) FontWeight.Bold else FontWeight.Medium
+                    )
+                }
             }
         }
     }

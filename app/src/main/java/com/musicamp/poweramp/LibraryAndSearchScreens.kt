@@ -27,6 +27,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -40,6 +45,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAdd
@@ -119,80 +125,461 @@ fun PowerampLibraryScreen(
 @Composable
 private fun LibraryCategoriesList(controller: PowerampController) {
     val categories = LibraryCategory.entries
-    Box(modifier = Modifier.fillMaxSize()) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 16.dp)
-        ) {
-            // Header: "Library" (bold 32sp) on left, 3-dot circle menu on right (`02_library.png`)
-            item {
+    // Real library statistics for the Home header (no placeholder content)
+    val libraryTracks = controller.allTracks.toList()
+    val trackCount = libraryTracks.size
+    val albumCount = libraryTracks.map { it.album }.distinct().size
+    val artistCount = libraryTracks.map { it.artist }.distinct().size
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(PowerampBg),
+        contentPadding = PaddingValues(bottom = 24.dp)
+    ) {
+        // 1. TOP CURVED BERRY HEADER WITH SEARCH BAR & FEATURED ALBUM CAROUSEL
+        item {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(bottomStart = 32.dp, bottomEnd = 32.dp))
+                    .background(ThemeBerryHeaderGradient)
+                    .statusBarsPadding()
+                    .padding(horizontal = 18.dp, vertical = 14.dp)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    // Search Pill Bar (White rounded pill with Search & Mic)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(46.dp)
+                            .clip(RoundedCornerShape(23.dp))
+                            .background(if (AppTheme.isDark) PowerampPillBg else Color.White)
+                            .clickable {
+                                controller.currentMainTab = MainNavTab.SEARCH
+                            }
+                            .padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Search,
+                            contentDescription = "Search",
+                            tint = Color(0xFF9E9E9E),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "Search",
+                            color = Color(0xFF9E9E9E),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            imageVector = Icons.Filled.Mic,
+                            contentDescription = "Voice Search",
+                            tint = Color(0xFF9E9E9E),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    // "Albums" Section Header + "3 New" Badge + Settings Quick Action
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Albums",
+                                color = Color.White,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            // "3 New" Pill Badge
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color.White)
+                                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "$albumCount",
+                                    color = ThemeBerryPrimary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+
+                        // Settings Icon Button in Header
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color(0x33FFFFFF))
+                                .clickable { controller.showSettingsScreen = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Settings,
+                                contentDescription = "Settings",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Featured card: library summary + "Play Random" button
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(ThemeCardColors[1])
+                            .clickable {
+                                val randomTrack = controller.allTracks.shuffled().firstOrNull() ?: controller.currentTrack
+                                if (randomTrack != null) {
+                                    controller.playTrack(randomTrack)
+                                } else {
+                                    controller.togglePlayPause()
+                                }
+                            }
+                    ) {
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val w = size.width
+                            val h = size.height
+                            drawRect(
+                                brush = Brush.linearGradient(
+                                    colors = ThemeCardColors
+                                )
+                            )
+                            // Ambient concert lighting
+                            drawCircle(
+                                brush = Brush.radialGradient(
+                                    colors = listOf(ThemeBerryLight.copy(alpha = 0.55f), Color.Transparent),
+                                    center = Offset(w * 0.72f, h * 0.45f),
+                                    radius = w * 0.45f
+                                )
+                            )
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Play Random",
+                                color = Color(0xCCFFFFFF),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.Bottom
+                            ) {
+                                Column {
+                                    Text(
+                                        text = if (trackCount == 0) "No music found" else "$trackCount ${if (trackCount == 1) "song" else "songs"}",
+                                        color = Color.White,
+                                        fontSize = 19.sp,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = if (trackCount == 0) "Allow audio access or add music to this device"
+                                        else "$albumCount ${if (albumCount == 1) "album" else "albums"}  |  " +
+                                            "$artistCount ${if (artistCount == 1) "artist" else "artists"}",
+                                        color = Color(0xB3FFFFFF),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+
+                                // Circular White Play Button with Berry Play Icon
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White)
+                                        .clickable {
+                                            val randomTrack = controller.allTracks.shuffled().firstOrNull() ?: controller.currentTrack
+                                            if (randomTrack != null) {
+                                                controller.playTrack(randomTrack)
+                                            } else {
+                                                controller.togglePlayPause()
+                                            }
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.PlayArrow,
+                                        contentDescription = "Play",
+                                        tint = ThemeBerryPrimary,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+            }
+        }
+
+        // 2. "ARTISTS" SECTION WITH "SEE ALL"
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 18.dp, end = 18.dp, top = 18.dp, bottom = 8.dp)
+            ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 24.dp, end = 16.dp, top = 22.dp, bottom = 18.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Library",
+                        text = "Artists",
                         color = PowerampTextPrimary,
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.ExtraBold
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
                     )
+                    Text(
+                        text = "See All",
+                        color = ThemeBerryPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clickable {
+                            controller.activeSubFilter = null
+                            controller.activeLibraryCategory = LibraryCategory.ARTISTS
+                        }
+                    )
+                }
 
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .border(1.2.dp, PowerampBorderGray, CircleShape)
-                            .clickable {
-                                controller.scanMediaLibrary()
-                                controller.showToast("Library Rescanned", "${controller.allTracks.size} tracks found")
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.MoreVert,
-                            contentDescription = "Library Options",
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Top artists from the real library (by number of songs)
+                val berryShades = ThemeTileShades
+                val artistList = libraryTracks.groupBy { it.artist }.entries
+                    .sortedByDescending { it.value.size }
+                    .take(10)
+                    .mapIndexed { i, e -> Triple(e.key, "${e.value.size} ${if (e.value.size == 1) "song" else "songs"}", berryShades[i % berryShades.size]) }
+
+                if (artistList.isEmpty()) {
+                    Text(text = "No artists yet", color = PowerampTextSecondary, fontSize = 13.sp)
+                } else LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    items(artistList) { (name, songs, artColor) ->
+                        Column(
+                            horizontalAlignment = Alignment.Start,
+                            modifier = Modifier.clickable {
+                                controller.activeSubFilter = name
+                                controller.activeLibraryCategory = LibraryCategory.ARTISTS
+                            }
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(68.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(artColor),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = name.take(2).uppercase(),
+                                    color = Color.White,
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = name,
+                                color = PowerampTextPrimary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = songs,
+                                color = PowerampTextSecondary,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     }
                 }
             }
+        }
 
-            // 19 Library Categories matching `02_library.png` and `15_library_scrolled.png`
-            items(categories) { category ->
+        // 3. "GENRES" SECTION WITH "SEE ALL"
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 18.dp, end = 18.dp, top = 14.dp, bottom = 8.dp)
+            ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(64.dp)
-                        .clickable {
-                            controller.activeSubFilter = null
-                            controller.isSelectionMode = false
-                            controller.selectedTrackIds.clear()
-                            controller.activeLibraryCategory = category
-                        }
-                        .padding(horizontal = 24.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    LibraryCategoryBadge(category = category, size = 38.dp)
-                    Spacer(modifier = Modifier.width(20.dp))
                     Text(
-                        text = category.title,
+                        text = "Genres",
                         color = PowerampTextPrimary,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.ExtraBold
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
                     )
-                    if (category == LibraryCategory.QUEUE) {
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Text(
-                            text = if (controller.queueTracks.isEmpty()) "empty" else "${controller.queueTracks.size}",
-                            color = PowerampTextPrimary,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                    Text(
+                        text = "See All",
+                        color = ThemeBerryPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clickable {
+                            controller.activeSubFilter = null
+                            controller.activeLibraryCategory = LibraryCategory.GENRES
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                val genrePalette = ThemeTileShades.let { s -> listOf(listOf(s[0], s[1]), listOf(s[1], s[2]), listOf(s[2], s[0])) }
+                // Real genres from the library, most songs first; "Unknown genre" goes last
+                val genreList = libraryTracks.groupBy { it.genre }.entries
+                    .sortedWith(compareBy({ it.key == "Unknown genre" }, { -it.value.size }))
+                    .take(8)
+                    .mapIndexed { i, e -> Pair(e.key, Brush.linearGradient(genrePalette[i % genrePalette.size])) }
+
+                if (genreList.isEmpty()) {
+                    Text(text = "No genres yet", color = PowerampTextSecondary, fontSize = 13.sp)
+                } else LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    items(genreList) { (genreName, brush) ->
+                        Box(
+                            modifier = Modifier
+                                .width(135.dp)
+                                .height(82.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(brush)
+                                .clickable {
+                                    controller.activeSubFilter = genreName
+                                    controller.activeLibraryCategory = LibraryCategory.GENRES
+                                }
+                                .padding(12.dp),
+                            contentAlignment = Alignment.BottomStart
+                        ) {
+                            Text(
+                                text = genreName,
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
+                }
+            }
+        }
+
+        // 4. QUICK CATEGORIES SHORTCUTS
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 18.dp, end = 18.dp, top = 14.dp)
+            ) {
+                Text(
+                    text = "Library Folders & Categories",
+                    color = PowerampTextPrimary,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+        }
+
+        // Prominent Settings Entry Row in Library List
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(60.dp)
+                    .clickable { controller.showSettingsScreen = true }
+                    .padding(horizontal = 18.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(ThemeBerryPrimary),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = "Settings",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Settings",
+                        color = PowerampTextPrimary,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Audio engine, DSP, Look and feel, Library scan",
+                        color = PowerampTextSecondary,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+        }
+
+        items(categories) { category ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(60.dp)
+                    .clickable {
+                        controller.activeSubFilter = null
+                        controller.isSelectionMode = false
+                        controller.selectedTrackIds.clear()
+                        controller.activeLibraryCategory = category
+                    }
+                    .padding(horizontal = 18.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                LibraryCategoryBadge(category = category, size = 36.dp)
+                Spacer(modifier = Modifier.width(16.dp))
+                Text(
+                    text = category.title,
+                    color = PowerampTextPrimary,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                if (category == LibraryCategory.QUEUE) {
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = if (controller.queueTracks.isEmpty()) "empty" else "${controller.queueTracks.size}",
+                        color = PowerampTextSecondary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium
+                    )
                 }
             }
         }
@@ -230,7 +617,7 @@ private fun LibraryCategoryDetailView(
                     .map { (genre, tracks) -> genre to "${tracks.size} songs" }
             }
             LibraryCategory.YEARS -> {
-                controller.allTracks.groupBy { it.year.toString() }
+                controller.allTracks.groupBy { yearLabel(it.year) }
                     .map { (yr, tracks) -> yr to "${tracks.size} songs" }
             }
             LibraryCategory.COMPOSERS -> {
@@ -255,7 +642,7 @@ private fun LibraryCategoryDetailView(
         LibraryCategory.GENRES ->
             controller.allTracks.filter { subFilter == null || it.genre == subFilter }
         LibraryCategory.YEARS ->
-            controller.allTracks.filter { subFilter == null || it.year.toString() == subFilter }
+            controller.allTracks.filter { subFilter == null || yearLabel(it.year) == subFilter }
         LibraryCategory.COMPOSERS ->
             controller.allTracks.filter { subFilter == null || it.composer == subFilter }
         LibraryCategory.PLAYLISTS -> {
@@ -272,7 +659,7 @@ private fun LibraryCategoryDetailView(
         LibraryCategory.STREAMS, LibraryCategory.BOOKMARKS -> emptyList()
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -302,7 +689,7 @@ private fun LibraryCategoryDetailView(
                         Icon(
                             imageVector = Icons.Filled.SubdirectoryArrowLeft,
                             contentDescription = "Back",
-                            tint = Color.White,
+                            tint = PowerampTextPrimary,
                             modifier = Modifier
                                 .size(17.dp)
                                 .rotate(90f)
@@ -310,7 +697,7 @@ private fun LibraryCategoryDetailView(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = if (subFilter != null) category.title else "Library",
-                            color = Color.White,
+                            color = PowerampTextPrimary,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
@@ -357,7 +744,7 @@ private fun LibraryCategoryDetailView(
                                 .border(1.2.dp, PowerampBorderGray, RoundedCornerShape(19.dp))
                                 .clickable {
                                     controller.shuffleMode = ShuffleMode.JUST_SONGS
-                                    filteredTracks.randomOrNull()?.let { controller.playTrack(it) }
+                                    filteredTracks.randomOrNull()?.let { controller.playTrack(it, filteredTracks) }
                                     controller.showToast("Shuffling ${subFilter ?: category.title}")
                                 },
                             contentAlignment = Alignment.Center
@@ -365,7 +752,7 @@ private fun LibraryCategoryDetailView(
                             Icon(
                                 imageVector = Icons.Filled.Shuffle,
                                 contentDescription = "Shuffle",
-                                tint = Color.White,
+                                tint = PowerampTextPrimary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -377,14 +764,14 @@ private fun LibraryCategoryDetailView(
                                 .clip(RoundedCornerShape(19.dp))
                                 .border(1.2.dp, PowerampBorderGray, RoundedCornerShape(19.dp))
                                 .clickable {
-                                    filteredTracks.firstOrNull()?.let { controller.playTrack(it) }
+                                    filteredTracks.firstOrNull()?.let { controller.playTrack(it, filteredTracks) }
                                 },
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.PlayArrow,
                                 contentDescription = "Play",
-                                tint = Color.White,
+                                tint = PowerampTextPrimary,
                                 modifier = Modifier.size(22.dp)
                             )
                         }
@@ -403,7 +790,7 @@ private fun LibraryCategoryDetailView(
                             Icon(
                                 imageVector = Icons.Filled.Search,
                                 contentDescription = "Search",
-                                tint = Color.White,
+                                tint = PowerampTextPrimary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -426,7 +813,7 @@ private fun LibraryCategoryDetailView(
                         ) {
                             Text(
                                 text = if (controller.isSelectionMode) "Done (${controller.selectedTrackIds.size})" else "Select",
-                                color = Color.White,
+                                color = if (controller.isSelectionMode) Color.White else PowerampTextPrimary,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.ExtraBold
                             )
@@ -462,7 +849,7 @@ private fun LibraryCategoryDetailView(
                                 Icons.Filled.MoreVert
                             },
                             contentDescription = "Menu",
-                            tint = Color.White,
+                            tint = PowerampTextPrimary,
                             modifier = Modifier.size(19.dp)
                         )
                     }
@@ -533,7 +920,7 @@ private fun LibraryCategoryDetailView(
                                 .fillMaxWidth()
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                                 .clip(RoundedCornerShape(20.dp))
-                                .background(Color(0xFF1A1B1E))
+                                .background(PowerampSurface)
                                 .clickable {
                                     val target = controller.allTracks.find { it.id == bm.trackId }
                                     if (target != null) {
@@ -544,12 +931,12 @@ private fun LibraryCategoryDetailView(
                                 .padding(14.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            PowerampMountainArtwork(modifier = Modifier.size(56.dp))
+                            TrackThumb(controller, controller.allTracks.find { it.id == bm.trackId }, 56.dp)
                             Spacer(modifier = Modifier.width(14.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = bm.trackTitle,
-                                    color = Color.White,
+                                    color = PowerampTextPrimary,
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.ExtraBold,
                                     maxLines = 1,
@@ -557,7 +944,7 @@ private fun LibraryCategoryDetailView(
                                 )
                                 Text(
                                     text = bm.artist,
-                                    color = Color(0xFFD0D2D6),
+                                    color = PowerampTextSecondary,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -586,9 +973,9 @@ private fun LibraryCategoryDetailView(
                             .fillMaxWidth()
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                             .clip(RoundedCornerShape(20.dp))
-                            .background(Color(0xFF1A1B1E))
+                            .background(PowerampSurface)
                             .clickable {
-                                controller.showToast("Connecting Stream...", stream.title)
+                                controller.showToast("Streams are not supported yet", stream.title)
                             }
                             .padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -598,7 +985,7 @@ private fun LibraryCategoryDetailView(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = stream.title,
-                                color = Color.White,
+                                color = PowerampTextPrimary,
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.ExtraBold
                             )
@@ -619,7 +1006,7 @@ private fun LibraryCategoryDetailView(
                             .fillMaxWidth()
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                             .clip(RoundedCornerShape(20.dp))
-                            .background(Color(0xFF16171A))
+                            .background(PowerampSurface)
                             .clickable { controller.activeSubFilter = groupTitle }
                             .padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -629,7 +1016,7 @@ private fun LibraryCategoryDetailView(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = groupTitle,
-                                color = Color.White,
+                                color = PowerampTextPrimary,
                                 fontSize = 17.sp,
                                 fontWeight = FontWeight.ExtraBold
                             )
@@ -663,8 +1050,8 @@ private fun LibraryCategoryDetailView(
                             .clip(RoundedCornerShape(24.dp))
                             .background(
                                 when {
-                                    isSelected -> Color(0xFF2B323A)
-                                    isCurrent -> Color(0xFF232427)
+                                    isSelected -> Color(0xFFEFD9E4)
+                                    isCurrent -> Color(0xFFF7E4EE)
                                     else -> Color.Transparent
                                 }
                             )
@@ -674,7 +1061,7 @@ private fun LibraryCategoryDetailView(
                                         if (isSelected) controller.selectedTrackIds.remove(track.id)
                                         else controller.selectedTrackIds.add(track.id)
                                     } else {
-                                        controller.playTrack(track)
+                                        controller.playTrack(track, filteredTracks)
                                     }
                                 },
                                 onLongClick = {
@@ -695,11 +1082,8 @@ private fun LibraryCategoryDetailView(
                                     .size(22.dp)
                             )
                         }
-
-                        // Square mountain placeholder artwork (76.dp)
-                        PowerampMountainArtwork(
-                            modifier = Modifier.size(72.dp)
-                        )
+                        // Real cover art (or a neutral placeholder when the file has none)
+                        TrackThumb(controller, track, 72.dp)
 
                         Spacer(modifier = Modifier.width(12.dp))
 
@@ -718,7 +1102,7 @@ private fun LibraryCategoryDetailView(
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = track.artist,
-                                color = Color(0xFFE2E4E8),
+                                color = PowerampTextSecondary,
                                 fontSize = 13.5.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
@@ -815,6 +1199,7 @@ fun PowerampSearchScreen(
         modifier = modifier
             .fillMaxSize()
             .background(PowerampBg)
+            .statusBarsPadding()
     ) {
         // 1. Rounded Search Input Bar (`04_search.png`)
         Row(
@@ -823,7 +1208,7 @@ fun PowerampSearchScreen(
                 .padding(horizontal = 8.dp, vertical = 6.dp)
                 .height(48.dp)
                 .clip(RoundedCornerShape(24.dp))
-                .background(Color(0xFF28292C))
+                .background(PowerampPillBg)
                 .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -910,9 +1295,9 @@ fun PowerampSearchScreen(
                     modifier = Modifier
                         .size(width = 50.dp, height = 36.dp)
                         .clip(RoundedCornerShape(18.dp))
-                        .border(1.dp, Color(0xFF28292D), RoundedCornerShape(18.dp))
+                        .border(1.dp, PowerampBorderGray, RoundedCornerShape(18.dp))
                         .clickable(enabled = hasResults) {
-                            results.randomOrNull()?.let { controller.playTrack(it) }
+                            results.randomOrNull()?.let { controller.playTrack(it, results) }
                         },
                     contentAlignment = Alignment.Center
                 ) {
@@ -928,9 +1313,9 @@ fun PowerampSearchScreen(
                     modifier = Modifier
                         .size(width = 50.dp, height = 36.dp)
                         .clip(RoundedCornerShape(18.dp))
-                        .border(1.dp, Color(0xFF28292D), RoundedCornerShape(18.dp))
+                        .border(1.dp, PowerampBorderGray, RoundedCornerShape(18.dp))
                         .clickable(enabled = hasResults) {
-                            results.firstOrNull()?.let { controller.playTrack(it) }
+                            results.firstOrNull()?.let { controller.playTrack(it, results) }
                         },
                     contentAlignment = Alignment.Center
                 ) {
@@ -946,7 +1331,7 @@ fun PowerampSearchScreen(
                     modifier = Modifier
                         .height(36.dp)
                         .clip(RoundedCornerShape(18.dp))
-                        .border(1.dp, Color(0xFF28292D), RoundedCornerShape(18.dp))
+                        .border(1.dp, PowerampBorderGray, RoundedCornerShape(18.dp))
                         .clickable(enabled = hasResults) {
                             controller.isSelectionMode = !controller.isSelectionMode
                         }
@@ -995,7 +1380,7 @@ fun PowerampSearchScreen(
                         .clip(RoundedCornerShape(22.dp))
                         .background(if (isCurrent) Color(0xFF232427) else Color.Transparent)
                         .combinedClickable(
-                            onClick = { controller.playTrack(track) },
+                            onClick = { controller.playTrack(track, results) },
                             onLongClick = {
                                 controller.actionTargetTrack = track
                                 controller.showTrackActionDialog = true
@@ -1004,7 +1389,7 @@ fun PowerampSearchScreen(
                         .padding(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    PowerampMountainArtwork(modifier = Modifier.size(60.dp))
+                    TrackThumb(controller, track, 60.dp)
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -1068,7 +1453,7 @@ fun PowerampLyricsScreen(
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = track?.title ?: "luminewave-this-is-home-637005.mp3",
+                    text = track?.title ?: "No track",
                     color = Color.White,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -1084,7 +1469,7 @@ fun PowerampLyricsScreen(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "𝄞 ${track?.metaLine ?: "1:12 | mp3"}",
+                    text = "𝄞 ${track?.metaLine ?: ""}",
                     color = PowerampTextSecondary,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold

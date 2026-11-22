@@ -29,7 +29,9 @@ data class AudioTrack(
     val lastPlayedTimestamp: Long = 0L,
     val dateAddedSec: Long = System.currentTimeMillis() / 1000L,
     val lyrics: String = "",
-    val waveformBars: List<Float> = emptyList()
+    val waveformBars: List<Float> = emptyList(),
+    val tagTitle: String = "",
+    val albumId: Long = 0L
 ) {
     val formattedDuration: String
         get() {
@@ -193,6 +195,10 @@ val BUILT_IN_EQ_PRESETS = listOf(
     EqPreset("Sony WH-1000XM5", "AutoEq", false, -2.0f, listOf(-2.5f, -3.2f, -1.8f, 0.4f, 1.5f, 2.2f, 3.1f, 1.8f, 2.9f, 1.5f), 0.10f, 0.25f)
 )
 
+const val WAVEFORM_BARS = 84
+val NEUTRAL_WAVEFORM: List<Float> = List(WAVEFORM_BARS) { 0.3f }
+val DEFAULT_MUSIC_FOLDERS = listOf("/sdcard/Music", "/sdcard/Download")
+
 val BUILT_IN_REVERB_PRESETS = listOf(
     ReverbPreset("Small Room", 0.35f, 0.40f, 0.25f, 0.15f, 0.20f, 0.30f, 0.25f),
     ReverbPreset("Medium Room", 0.45f, 0.50f, 0.45f, 0.30f, 0.35f, 0.55f, 0.35f),
@@ -200,3 +206,6 @@ val BUILT_IN_REVERB_PRESETS = listOf(
     ReverbPreset("Plate", 0.25f, 0.70f, 0.60f, 0.10f, 0.50f, 0.65f, 0.40f),
     ReverbPreset("Cathedral", 0.75f, 0.45f, 0.90f, 0.70f, 0.60f, 0.95f, 0.60f)
 )
+
+/** Display label for a release year; 0 means the file has no year tag. */
+fun yearLabel(year: Int): String = if (year > 0) year.toString() else "Unknown year"
