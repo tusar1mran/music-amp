@@ -2,7 +2,21 @@ package com.musicamp.poweramp
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode as AnimRepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -122,15 +136,34 @@ fun PowerampLibraryScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LibraryCategoriesList(controller: PowerampController) {
-    val categories = LibraryCategory.entries
-    // Real library statistics for the Home header (no placeholder content)
+    val categories = remember { LibraryCategory.entries }
+    // Snapshot tracks cleanly so scrolling never recomputes stats/groupings on every frame
     val libraryTracks = controller.allTracks.toList()
     val trackCount = libraryTracks.size
-    val albumCount = libraryTracks.map { it.album }.distinct().size
-    val artistCount = libraryTracks.map { it.artist }.distinct().size
+    val (albumCount, artistCount, artistList, genreList) = remember(libraryTracks) {
+        val albums = libraryTracks.map { it.album }.distinct().size
+        val artists = libraryTracks.map { it.artist }.distinct().size
+        val topArtists = libraryTracks.groupBy { it.artist }.entries
+            .sortedByDescending { it.value.size }
+            .take(10)
+            .map { e -> e.key to "${e.value.size} ${if (e.value.size == 1) "song" else "songs"}" }
+        val topGenres = libraryTracks.groupBy { it.genre }.entries
+            .sortedWith(compareBy({ it.key == "Unknown genre" }, { -it.value.size }))
+            .take(8)
+            .map { it.key }
+        LibraryHomeStats(albums, artists, topArtists, topGenres)
+    }
 
+    PullToRefreshBox(
+        isRefreshing = controller.scanning,
+        onRefresh = { controller.refreshLibrary(showFeedback = true) },
+        modifier = Modifier
+            .fillMaxSize()
+            .background(PowerampBg)
+    ) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -215,21 +248,32 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                             }
                         }
 
-                        // Settings Icon Button in Header
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(Color(0x33FFFFFF))
-                                .clickable { controller.showSettingsScreen = true },
-                            contentAlignment = Alignment.Center
+                        // Refresh Library + Settings Icon Buttons in Header
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Filled.Settings,
-                                contentDescription = "Settings",
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp)
+                            LibraryRefreshIconButton(
+                                isScanning = controller.scanning,
+                                onClick = { controller.refreshLibrary(showFeedback = true) },
+                                containerColor = Color(0x33FFFFFF),
+                                iconTint = Color.White
                             )
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x33FFFFFF))
+                                    .clickable { controller.showSettingsScreen = true },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Settings,
+                                    contentDescription = "Settings",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
 
@@ -371,17 +415,18 @@ private fun LibraryCategoriesList(controller: PowerampController) {
 
                 // Top artists from the real library (by number of songs)
                 val berryShades = ThemeTileShades
-                val artistList = libraryTracks.groupBy { it.artist }.entries
-                    .sortedByDescending { it.value.size }
-                    .take(10)
-                    .mapIndexed { i, e -> Triple(e.key, "${e.value.size} ${if (e.value.size == 1) "song" else "songs"}", berryShades[i % berryShades.size]) }
 
                 if (artistList.isEmpty()) {
                     Text(text = "No artists yet", color = PowerampTextSecondary, fontSize = 13.sp)
                 } else LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    items(artistList) { (name, songs, artColor) ->
+                    items(
+                        items = artistList,
+                        key = { it.first },
+                        contentType = { "artistTile" }
+                    ) { (name, songs) ->
+                        val artColor = berryShades[(name.hashCode() and 0x7fffffff) % berryShades.size]
                         Column(
                             horizontalAlignment = Alignment.Start,
                             modifier = Modifier.clickable {
@@ -455,18 +500,18 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                 Spacer(modifier = Modifier.height(12.dp))
 
                 val genrePalette = ThemeTileShades.let { s -> listOf(listOf(s[0], s[1]), listOf(s[1], s[2]), listOf(s[2], s[0])) }
-                // Real genres from the library, most songs first; "Unknown genre" goes last
-                val genreList = libraryTracks.groupBy { it.genre }.entries
-                    .sortedWith(compareBy({ it.key == "Unknown genre" }, { -it.value.size }))
-                    .take(8)
-                    .mapIndexed { i, e -> Pair(e.key, Brush.linearGradient(genrePalette[i % genrePalette.size])) }
 
                 if (genreList.isEmpty()) {
                     Text(text = "No genres yet", color = PowerampTextSecondary, fontSize = 13.sp)
                 } else LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    items(genreList) { (genreName, brush) ->
+                    items(
+                        items = genreList,
+                        key = { it },
+                        contentType = { "genreTile" }
+                    ) { genreName ->
+                        val brush = Brush.linearGradient(genrePalette[(genreName.hashCode() and 0x7fffffff) % genrePalette.size])
                         Box(
                             modifier = Modifier
                                 .width(135.dp)
@@ -550,7 +595,11 @@ private fun LibraryCategoriesList(controller: PowerampController) {
             }
         }
 
-        items(categories) { category ->
+        items(
+            items = categories,
+            key = { it.name },
+            contentType = { "libraryCategory" }
+        ) { category ->
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -584,9 +633,58 @@ private fun LibraryCategoriesList(controller: PowerampController) {
             }
         }
     }
+    }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+private data class LibraryHomeStats(
+    val albumCount: Int,
+    val artistCount: Int,
+    val topArtists: List<Pair<String, String>>,
+    val topGenres: List<String>
+)
+
+@Composable
+private fun LibraryRefreshIconButton(
+    isScanning: Boolean,
+    onClick: () -> Unit,
+    containerColor: Color,
+    iconTint: Color,
+    borderColor: Color? = null
+) {
+    val rotation = if (isScanning) {
+        val infiniteTransition = rememberInfiniteTransition(label = "refreshSpin")
+        infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 750, easing = LinearEasing),
+                repeatMode = AnimRepeatMode.Restart
+            ),
+            label = "refreshAngle"
+        ).value
+    } else 0f
+
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            .background(containerColor)
+            .then(if (borderColor != null) Modifier.border(1.2.dp, borderColor, CircleShape) else Modifier)
+            .clickable(enabled = !isScanning, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Refresh,
+            contentDescription = "Refresh Library",
+            tint = iconTint,
+            modifier = Modifier
+                .size(20.dp)
+                .graphicsLayer { rotationZ = rotation }
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun LibraryCategoryDetailView(
     controller: PowerampController,
@@ -594,114 +692,149 @@ private fun LibraryCategoryDetailView(
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    var activeAlphabetLetter by remember { mutableStateOf<Char?>(null) }
 
     // Determine whether we should show a grouping list first (e.g. Folders, Albums, Artists, Genres, Years, Playlists)
     // unless activeSubFilter is already chosen
     val subFilter = controller.activeSubFilter
-    val groupingItems: List<Pair<String, String>>? = if (subFilter == null) {
-        when (category) {
-            LibraryCategory.FOLDERS, LibraryCategory.FOLDERS_HIERARCHY -> {
-                controller.allTracks.groupBy { it.folderName }
-                    .map { (folder, tracks) -> folder to "${tracks.size} songs | ${tracks.first().folderPath}" }
-            }
-            LibraryCategory.ALBUMS -> {
-                controller.allTracks.groupBy { it.album }
-                    .map { (album, tracks) -> album to "${tracks.first().artist} • ${tracks.size} songs" }
-            }
-            LibraryCategory.ARTISTS, LibraryCategory.ALBUM_ARTISTS -> {
-                controller.allTracks.groupBy { it.artist }
-                    .map { (artist, tracks) -> artist to "${tracks.size} songs" }
-            }
-            LibraryCategory.GENRES -> {
-                controller.allTracks.groupBy { it.genre }
-                    .map { (genre, tracks) -> genre to "${tracks.size} songs" }
-            }
-            LibraryCategory.YEARS -> {
-                controller.allTracks.groupBy { yearLabel(it.year) }
-                    .map { (yr, tracks) -> yr to "${tracks.size} songs" }
-            }
-            LibraryCategory.COMPOSERS -> {
-                controller.allTracks.groupBy { it.composer }
-                    .map { (comp, tracks) -> comp to "${tracks.size} songs" }
-            }
-            LibraryCategory.PLAYLISTS -> {
-                controller.playlists.map { pl -> pl.name to "${pl.trackIds.size} songs" }
-            }
-            else -> null
-        }
-    } else null
+    val tracksSnapshot = controller.allTracks.toList()
+    val playlistsSnapshot = controller.playlists.toList()
+    val queueSnapshot = controller.queueTracks.toList()
 
-    val filteredTracks: List<AudioTrack> = when (category) {
-        LibraryCategory.ALL_SONGS -> controller.allTracks
-        LibraryCategory.FOLDERS, LibraryCategory.FOLDERS_HIERARCHY ->
-            controller.allTracks.filter { subFilter == null || it.folderName == subFilter }
-        LibraryCategory.ALBUMS ->
-            controller.allTracks.filter { subFilter == null || it.album == subFilter }
-        LibraryCategory.ARTISTS, LibraryCategory.ALBUM_ARTISTS ->
-            controller.allTracks.filter { subFilter == null || it.artist == subFilter }
-        LibraryCategory.GENRES ->
-            controller.allTracks.filter { subFilter == null || it.genre == subFilter }
-        LibraryCategory.YEARS ->
-            controller.allTracks.filter { subFilter == null || yearLabel(it.year) == subFilter }
-        LibraryCategory.COMPOSERS ->
-            controller.allTracks.filter { subFilter == null || it.composer == subFilter }
-        LibraryCategory.PLAYLISTS -> {
-            val pl = controller.playlists.find { it.name == subFilter }
-            if (pl != null) controller.allTracks.filter { it.id in pl.trackIds } else controller.allTracks
+    val groupingItems: List<Pair<String, String>>? = remember(category, subFilter, tracksSnapshot, playlistsSnapshot) {
+        if (subFilter == null) {
+            when (category) {
+                LibraryCategory.FOLDERS, LibraryCategory.FOLDERS_HIERARCHY -> {
+                    tracksSnapshot.groupBy { it.folderName }
+                        .map { (folder, tracks) -> folder to "${tracks.size} songs | ${tracks.first().folderPath}" }
+                        .sortedBy { it.first.lowercase() }
+                }
+                LibraryCategory.ALBUMS -> {
+                    tracksSnapshot.groupBy { it.album }
+                        .map { (album, tracks) -> album to "${tracks.first().artist} • ${tracks.size} songs" }
+                        .sortedBy { it.first.lowercase() }
+                }
+                LibraryCategory.ARTISTS, LibraryCategory.ALBUM_ARTISTS -> {
+                    tracksSnapshot.groupBy { it.artist }
+                        .map { (artist, tracks) -> artist to "${tracks.size} songs" }
+                        .sortedBy { it.first.lowercase() }
+                }
+                LibraryCategory.GENRES -> {
+                    tracksSnapshot.groupBy { it.genre }
+                        .map { (genre, tracks) -> genre to "${tracks.size} songs" }
+                        .sortedBy { it.first.lowercase() }
+                }
+                LibraryCategory.YEARS -> {
+                    tracksSnapshot.groupBy { yearLabel(it.year) }
+                        .map { (yr, tracks) -> yr to "${tracks.size} songs" }
+                        .sortedByDescending { it.first }
+                }
+                LibraryCategory.COMPOSERS -> {
+                    tracksSnapshot.groupBy { it.composer }
+                        .map { (comp, tracks) -> comp to "${tracks.size} songs" }
+                        .sortedBy { it.first.lowercase() }
+                }
+                LibraryCategory.PLAYLISTS -> {
+                    playlistsSnapshot.map { pl -> pl.name to "${pl.trackIds.size} songs" }
+                }
+                else -> null
+            }
+        } else null
+    }
+
+    val filteredTracks: List<AudioTrack> = remember(category, subFilter, tracksSnapshot, playlistsSnapshot, queueSnapshot) {
+        when (category) {
+            LibraryCategory.ALL_SONGS -> tracksSnapshot
+            LibraryCategory.FOLDERS, LibraryCategory.FOLDERS_HIERARCHY ->
+                tracksSnapshot.filter { subFilter == null || it.folderName == subFilter }
+            LibraryCategory.ALBUMS ->
+                tracksSnapshot.filter { subFilter == null || it.album == subFilter }
+            LibraryCategory.ARTISTS, LibraryCategory.ALBUM_ARTISTS ->
+                tracksSnapshot.filter { subFilter == null || it.artist == subFilter }
+            LibraryCategory.GENRES ->
+                tracksSnapshot.filter { subFilter == null || it.genre == subFilter }
+            LibraryCategory.YEARS ->
+                tracksSnapshot.filter { subFilter == null || yearLabel(it.year) == subFilter }
+            LibraryCategory.COMPOSERS ->
+                tracksSnapshot.filter { subFilter == null || it.composer == subFilter }
+            LibraryCategory.PLAYLISTS -> {
+                val pl = playlistsSnapshot.find { it.name == subFilter }
+                if (pl != null) tracksSnapshot.filter { it.id in pl.trackIds } else tracksSnapshot
+            }
+            LibraryCategory.QUEUE -> queueSnapshot
+            LibraryCategory.MOST_PLAYED -> tracksSnapshot.sortedByDescending { it.playCount }
+            LibraryCategory.TOP_RATED -> tracksSnapshot.filter { it.rating == 1 }
+            LibraryCategory.LOW_RATED -> tracksSnapshot.filter { it.rating == -1 }
+            LibraryCategory.RECENTLY_PLAYED -> tracksSnapshot.filter { it.lastPlayedTimestamp > 0 }.sortedByDescending { it.lastPlayedTimestamp }
+            LibraryCategory.RECENTLY_ADDED -> tracksSnapshot.sortedByDescending { it.dateAddedSec }
+            LibraryCategory.LONG -> tracksSnapshot.filter { it.durationMs >= 60_000L }
+            LibraryCategory.STREAMS, LibraryCategory.BOOKMARKS -> emptyList()
         }
-        LibraryCategory.QUEUE -> controller.queueTracks
-        LibraryCategory.MOST_PLAYED -> controller.allTracks.sortedByDescending { it.playCount }
-        LibraryCategory.TOP_RATED -> controller.allTracks.filter { it.rating == 1 }
-        LibraryCategory.LOW_RATED -> controller.allTracks.filter { it.rating == -1 }
-        LibraryCategory.RECENTLY_PLAYED -> controller.allTracks.filter { it.lastPlayedTimestamp > 0 }.sortedByDescending { it.lastPlayedTimestamp }
-        LibraryCategory.RECENTLY_ADDED -> controller.allTracks.sortedByDescending { it.dateAddedSec }
-        LibraryCategory.LONG -> controller.allTracks.filter { it.durationMs >= 60_000L }
-        LibraryCategory.STREAMS, LibraryCategory.BOOKMARKS -> emptyList()
     }
 
     Box(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+        PullToRefreshBox(
+            isRefreshing = controller.scanning,
+            onRefresh = { controller.refreshLibrary(showFeedback = true) },
+            modifier = Modifier.fillMaxSize()
+        ) {
         LazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(end = 20.dp),
+                .padding(end = 24.dp),
             contentPadding = PaddingValues(bottom = 20.dp)
         ) {
-            // 1. Back Button Pill (`↑ Library` or `↑ Category`) matching `09_all_songs.png`
-            item {
-                Box(
+            // 1. Back Button Pill (`↑ Library` or `↑ Category`) + Refresh Library Button
+            item(key = "detail_back_row", contentType = "header") {
+                Row(
                     modifier = Modifier
-                        .padding(start = 12.dp, top = 10.dp, bottom = 14.dp)
-                        .height(36.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .border(1.2.dp, PowerampBorderGray, RoundedCornerShape(18.dp))
-                        .clickable {
-                            if (controller.activeSubFilter != null) {
-                                controller.activeSubFilter = null
-                            } else {
-                                controller.activeLibraryCategory = null
-                            }
-                        }
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Filled.SubdirectoryArrowLeft,
-                            contentDescription = "Back",
-                            tint = PowerampTextPrimary,
-                            modifier = Modifier
-                                .size(17.dp)
-                                .rotate(90f)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (subFilter != null) category.title else "Library",
-                            color = PowerampTextPrimary,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
+                    Box(
+                        modifier = Modifier
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .border(1.2.dp, PowerampBorderGray, RoundedCornerShape(18.dp))
+                            .clickable {
+                                if (controller.activeSubFilter != null) {
+                                    controller.activeSubFilter = null
+                                } else {
+                                    controller.activeLibraryCategory = null
+                                }
+                            }
+                            .padding(horizontal = 14.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Filled.SubdirectoryArrowLeft,
+                                contentDescription = "Back",
+                                tint = PowerampTextPrimary,
+                                modifier = Modifier
+                                    .size(17.dp)
+                                    .rotate(90f)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (subFilter != null) category.title else "Library",
+                                color = PowerampTextPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
                     }
+
+                    LibraryRefreshIconButton(
+                        isScanning = controller.scanning,
+                        onClick = { controller.refreshLibrary(showFeedback = true) },
+                        containerColor = Color.Transparent,
+                        iconTint = PowerampTextPrimary,
+                        borderColor = PowerampBorderGray
+                    )
                 }
             }
 
@@ -835,8 +968,7 @@ private fun LibraryCategoryDetailView(
                                         controller.showToast("Queue Cleared")
                                     }
                                     else -> {
-                                        controller.scanMediaLibrary()
-                                        controller.showToast("List Refreshed")
+                                        controller.refreshLibrary(showFeedback = true)
                                     }
                                 }
                             },
@@ -1000,7 +1132,11 @@ private fun LibraryCategoryDetailView(
                     }
                 }
             } else if (groupingItems != null) {
-                items(groupingItems) { (groupTitle, groupSub) ->
+                items(
+                    items = groupingItems,
+                    key = { it.first },
+                    contentType = { "groupRow" }
+                ) { (groupTitle, groupSub) ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1039,7 +1175,11 @@ private fun LibraryCategoryDetailView(
                 }
             } else {
                 // 5. Track Rows matching `09_all_songs.png`
-                items(filteredTracks, key = { it.id }) { track ->
+                items(
+                    items = filteredTracks,
+                    key = { it.id },
+                    contentType = { "trackRow" }
+                ) { track ->
                     val isCurrent = controller.currentTrack?.id == track.id
                     val isSelected = track.id in controller.selectedTrackIds
 
@@ -1050,8 +1190,8 @@ private fun LibraryCategoryDetailView(
                             .clip(RoundedCornerShape(24.dp))
                             .background(
                                 when {
-                                    isSelected -> Color(0xFFEFD9E4)
-                                    isCurrent -> Color(0xFFF7E4EE)
+                                    isSelected -> if (AppTheme.isDark) ThemeBerryPrimary.copy(alpha = 0.28f) else Color(0xFFEFD9E4)
+                                    isCurrent -> if (AppTheme.isDark) ThemeBerryPrimary.copy(alpha = 0.16f) else Color(0xFFF7E4EE)
                                     else -> Color.Transparent
                                 }
                             )
@@ -1128,23 +1268,49 @@ private fun LibraryCategoryDetailView(
                 }
             }
         }
+        }
 
-        // Right-edge Vertical A-Z Fast Scroller (`09_all_songs.png`)
+        // Right-edge Interactive A-Z Fast Scroller with Big Alphabet Bubble Preview
         PowerampAlphabetScroller(
-            onLetterSelected = { letter ->
-                val targetIndex = filteredTracks.indexOfFirst {
-                    it.title.firstOrNull()?.uppercaseChar() == letter
-                }
-                if (targetIndex >= 0) {
-                    scope.launch {
-                        listState.animateScrollToItem(targetIndex + 3)
+            onLetterSelected = { letter, isDragging ->
+                val labels: List<String> = groupingItems?.map { it.first } ?: filteredTracks.map { it.title }
+                val targetIndex = when (letter) {
+                    '˄' -> -3 // scroll all the way to top header (index 0)
+                    '0' -> labels.indexOfFirst { it.firstOrNull()?.isDigit() == true }
+                    '#' -> labels.indexOfFirst { ch -> ch.firstOrNull()?.let { !it.isLetterOrDigit() } == true }
+                        .takeIf { it >= 0 } ?: (labels.lastIndex)
+                    else -> {
+                        val exact = labels.indexOfFirst { it.firstOrNull()?.uppercaseChar() == letter }
+                        if (exact >= 0) exact
+                        else labels.indexOfFirst { (it.firstOrNull()?.uppercaseChar() ?: ' ') >= letter }
                     }
                 }
+                if (targetIndex == -3) {
+                    scope.launch {
+                        if (isDragging) listState.scrollToItem(0) else listState.animateScrollToItem(0)
+                    }
+                } else if (targetIndex >= 0) {
+                    scope.launch {
+                        val listIdx = targetIndex + 3
+                        if (isDragging) listState.scrollToItem(listIdx) else listState.animateScrollToItem(listIdx)
+                    }
+                }
+            },
+            onActiveLetterChanged = { letter, _ ->
+                activeAlphabetLetter = letter
             },
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .fillMaxHeight(0.88f)
                 .padding(end = 1.dp)
+        )
+
+        // Large Floating Alphabet Overlay Bubble (pops up smoothly when tapping/dragging A-Z strip)
+        PowerampAlphabetBubble(
+            letter = activeAlphabetLetter,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(end = 12.dp)
         )
     }
 }
@@ -1183,15 +1349,18 @@ fun PowerampSearchScreen(
     modifier: Modifier = Modifier
 ) {
     val query = controller.searchQuery.trim()
-    val results = if (query.isEmpty()) {
-        controller.allTracks
-    } else {
-        controller.allTracks.filter {
-            it.title.contains(query, ignoreCase = true) ||
-                it.artist.contains(query, ignoreCase = true) ||
-                it.album.contains(query, ignoreCase = true) ||
-                it.folderName.contains(query, ignoreCase = true) ||
-                it.genre.contains(query, ignoreCase = true)
+    val allTracksSnapshot = controller.allTracks.toList()
+    val results = remember(query, allTracksSnapshot) {
+        if (query.isEmpty()) {
+            allTracksSnapshot
+        } else {
+            allTracksSnapshot.filter {
+                it.title.contains(query, ignoreCase = true) ||
+                    it.artist.contains(query, ignoreCase = true) ||
+                    it.album.contains(query, ignoreCase = true) ||
+                    it.folderName.contains(query, ignoreCase = true) ||
+                    it.genre.contains(query, ignoreCase = true)
+            }
         }
     }
 
@@ -1371,7 +1540,11 @@ fun PowerampSearchScreen(
                 .fillMaxWidth(),
             contentPadding = PaddingValues(vertical = 8.dp)
         ) {
-            items(results, key = { it.id }) { track ->
+            items(
+                items = results,
+                key = { it.id },
+                contentType = { "searchTrackRow" }
+            ) { track ->
                 val isCurrent = controller.currentTrack?.id == track.id
                 Row(
                     modifier = Modifier

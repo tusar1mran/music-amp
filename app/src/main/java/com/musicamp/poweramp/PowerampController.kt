@@ -35,7 +35,9 @@ import kotlin.math.sqrt
 import android.media.AudioManager
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
+import android.media.MediaScannerConnection
 import android.media.PlaybackParams
+import android.os.Environment
 import android.media.audiofx.Equalizer
 import android.media.audiofx.PresetReverb
 import android.media.audiofx.Virtualizer
@@ -114,6 +116,11 @@ class PowerampController(private val context: Context) {
         override fun sizeOf(key: Long, value: Bitmap): Int = value.byteCount / 1024
     }
     private val noArtIds = HashSet<Long>()
+    fun getCachedArt(trackId: Long): Bitmap? = artCache.get(trackId)
+
+    /** Live display refresh rate (60/90/120/144 Hz), auto-adapted by MainActivity. */
+    @Volatile var displayRefreshRateHz: Float = 60f
+
     var scanning by mutableStateOf(false)
     var libraryLoaded by mutableStateOf(false)
 
@@ -168,10 +175,11 @@ class PowerampController(private val context: Context) {
     var currentPositionMs by mutableLongStateOf(0L)
     var durationMs by mutableLongStateOf(0L)
 
-    // Seeking on Next / Previous button hold
+    // Seeking on Next / Previous button hold & waveform scrubbing
     var isSeekingFwd by mutableStateOf(false)
     var isSeekingRwd by mutableStateOf(false)
     var seekingAccumulatedDeltaMs by mutableLongStateOf(0L)
+    var isScrubbing by mutableStateOf(false)
 
     val progressFraction: Float
         get() = if (durationMs > 0L) (currentPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
@@ -359,9 +367,46 @@ class PowerampController(private val context: Context) {
     // Library scan (MediaStore, off the main thread)
     // ==========================================================================================
     fun scanMediaLibrary() {
+        refreshLibrary(showFeedback = false)
+    }
+
+    /**
+     * Rescans device storage & MediaStore for newly added or removed audio files.
+     * Clears the negative artwork cache so freshly added covers appear immediately.
+     */
+    fun refreshLibrary(showFeedback: Boolean = true) {
         if (scanning) return
         scanning = true
+        val prevIds = allTracks.map { it.id }.toSet()
         scope.launch {
+            if (showFeedback) {
+                // Ask Android's MediaScanner to index any newly dropped files in Music / Download folders
+                withContext(Dispatchers.IO) {
+                    try {
+                        val dirs = LinkedHashSet<File>()
+                        dirs.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC))
+                        dirs.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS))
+                        selectedMusicFolders.forEach { folder ->
+                            dirs.add(File(folder.replace("/sdcard", Environment.getExternalStorageDirectory().absolutePath)))
+                        }
+                        val audioExts = setOf("mp3", "flac", "wav", "m4a", "aac", "ogg", "opus", "wma", "aiff")
+                        val pathsToScan = ArrayList<String>()
+                        dirs.filter { it.exists() && it.isDirectory }.forEach { dir ->
+                            dir.walkTopDown().maxDepth(4).forEach { f ->
+                                if (f.isFile && f.extension.lowercase() in audioExts) {
+                                    pathsToScan.add(f.absolutePath)
+                                }
+                            }
+                        }
+                        if (pathsToScan.isNotEmpty()) {
+                            MediaScannerConnection.scanFile(context, pathsToScan.toTypedArray(), null, null)
+                            delay(250L)
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+            noArtIds.clear()
             val found = try {
                 withContext(Dispatchers.IO) { queryMediaStore() }
             } catch (_: Exception) {
@@ -370,6 +415,15 @@ class PowerampController(private val context: Context) {
             applyScanResult(found)
             scanning = false
             libraryLoaded = true
+            if (showFeedback) {
+                val added = found.count { it.id !in prevIds }
+                val subtitle = when {
+                    added > 0 -> "${found.size} songs (+$added new)"
+                    found.isEmpty() -> "No audio files found"
+                    else -> "${found.size} songs up to date"
+                }
+                showToast("Library Refreshed", subtitle)
+            }
         }
     }
 
@@ -1149,29 +1203,43 @@ class PowerampController(private val context: Context) {
     }
 
     // ==========================================================================================
-    // Progress loop (smooth position + crossfade trigger + spectrum)
+    // Progress loop (auto-adaptive refresh rate + smooth position + crossfade trigger + spectrum)
     // ==========================================================================================
     private fun startProgressLoop() {
         progressJob?.cancel()
         progressJob = scope.launch {
+            var lastTickMs = SystemClock.uptimeMillis()
             while (isActive) {
+                val now = SystemClock.uptimeMillis()
+                val dtSec = ((now - lastTickMs) / 1000f).coerceIn(0.004f, 0.1f)
+                lastTickMs = now
                 val mp = mediaPlayer
                 if (isPlaying && mp != null) {
-                    val now = SystemClock.uptimeMillis()
-                    val pos = try { mp.currentPosition.toLong() } catch (_: Exception) { rawPosMs }
-                    if (pos != rawPosMs) {
-                        rawPosMs = pos
-                        rawPosAt = now
+                    if (!isScrubbing && !isSeekingFwd && !isSeekingRwd) {
+                        val pos = try { mp.currentPosition.toLong() } catch (_: Exception) { rawPosMs }
+                        if (pos != rawPosMs) {
+                            rawPosMs = pos
+                            rawPosAt = now
+                        }
+                        // MediaPlayer reports position in coarse steps; interpolate smoothly at native refresh rate
+                        val extrapolated = ((now - rawPosAt).coerceAtMost(120L) * playbackSpeed).toLong()
+                        currentPositionMs = (rawPosMs + extrapolated).coerceIn(0L, durationMs)
                     }
-                    // MediaPlayer reports position in coarse steps; interpolate between them for a fluid seek bar
-                    val extrapolated = ((now - rawPosAt).coerceAtMost(70L) * playbackSpeed).toLong()
-                    currentPositionMs = (rawPosMs + extrapolated).coerceIn(0L, durationMs)
                     checkCrossfadeTrigger()
                     if (now - lastPositionSaveAt > 5000L) savePosition()
-                    updateSpectrum(active = true)
-                    delay(16L)
+                    val needsSpectrum = visMode != VisMode.DISABLED || currentMainTab == MainNavTab.EQUALIZER
+                    if (needsSpectrum) {
+                        updateSpectrum(active = true, dtSec = dtSec)
+                    }
+                    // Auto-adapt loop cadence to the device's live display refresh rate (60/90/120/144Hz)
+                    val hz = displayRefreshRateHz.coerceIn(30f, 240f)
+                    val frameDelayMs = (1000f / hz).toLong().coerceIn(4L, 33L)
+                    delay(frameDelayMs)
                 } else {
-                    updateSpectrum(active = false)
+                    val needsSpectrum = visMode != VisMode.DISABLED || currentMainTab == MainNavTab.EQUALIZER
+                    if (needsSpectrum) {
+                        updateSpectrum(active = false, dtSec = dtSec)
+                    }
                     delay(60L)
                 }
             }
@@ -1247,20 +1315,26 @@ class PowerampController(private val context: Context) {
         fftFresh = true
     }
 
-    private fun updateSpectrum(active: Boolean) {
+    private fun updateSpectrum(active: Boolean, dtSec: Float = 1f / 60f) {
+        // Normalize smoothing & phase step to 60fps baseline so animation speed is identical at 60/90/120/144Hz
+        val step60 = (dtSec * 60f).coerceIn(0.25f, 3f)
         if (active && visualizerFx != null && fftFresh) {
-            visPhase = (visPhase + 0.085f) % (20f * Math.PI.toFloat())
+            visPhase = (visPhase + 0.085f * step60) % (20f * Math.PI.toFloat())
             val target = fftBars
+            val rise = (1f - (1f - 0.7f).pow(step60)).coerceIn(0.1f, 0.95f)
+            val fall = 0.86f.pow(step60)
             for (i in 0 until liveSpectrumAmplitudes.size) {
                 val t = target[i.coerceIn(0, target.lastIndex)].coerceAtLeast(0.03f)
                 val c = liveSpectrumAmplitudes[i]
-                liveSpectrumAmplitudes[i] = if (t > c) c + (t - c) * 0.7f else (c * 0.86f).coerceAtLeast(0.03f)
+                liveSpectrumAmplitudes[i] = if (t > c) c + (t - c) * rise else (c * fall).coerceAtLeast(0.03f)
             }
         } else if (active) {
-            visPhase = (visPhase + 0.085f) % (20f * Math.PI.toFloat())
+            visPhase = (visPhase + 0.085f * step60) % (20f * Math.PI.toFloat())
             val bars = currentTrack?.waveformBars ?: emptyList()
             val posIdx = if (bars.isNotEmpty()) (progressFraction * bars.lastIndex).toInt().coerceIn(0, bars.lastIndex) else 0
             val trackEnvelope = if (bars.isNotEmpty()) bars[posIdx] else 0.7f
+            val rise = (1f - (1f - 0.65f).pow(step60)).coerceIn(0.1f, 0.95f)
+            val fall = 0.84f.pow(step60)
             for (i in 0 until liveSpectrumAmplitudes.size) {
                 val freqFactor = 1f - (i.toFloat() / liveSpectrumAmplitudes.size) * 0.35f
                 val wave1 = sin(visPhase * 1.9f + i * 0.42f) * 0.5f + 0.5f
@@ -1268,12 +1342,13 @@ class PowerampController(private val context: Context) {
                 val beatPulse = (sin(visPhase * 1.15f) * 0.5f + 0.5f).pow(2)
                 val target = ((wave1 * 0.48f + wave2 * 0.32f + beatPulse * 0.20f) * trackEnvelope * freqFactor).coerceIn(0.05f, 1.0f)
                 val current = liveSpectrumAmplitudes[i]
-                liveSpectrumAmplitudes[i] = if (target > current) current + (target - current) * 0.65f else (current * 0.84f).coerceAtLeast(0.03f)
+                liveSpectrumAmplitudes[i] = if (target > current) current + (target - current) * rise else (current * fall).coerceAtLeast(0.03f)
             }
         } else {
+            val decay = 0.78f.pow(step60)
             for (i in 0 until liveSpectrumAmplitudes.size) {
                 val v = liveSpectrumAmplitudes[i]
-                if (v > 0.005f) liveSpectrumAmplitudes[i] = (v * 0.78f).coerceAtLeast(0f)
+                if (v > 0.005f) liveSpectrumAmplitudes[i] = (v * decay).coerceAtLeast(0f)
                 else if (v != 0f) liveSpectrumAmplitudes[i] = 0f
             }
         }
@@ -1338,6 +1413,12 @@ class PowerampController(private val context: Context) {
         if (currentTrack?.id != track.id) currentTrack?.let { pushHistory(it.id) }
         trackTransitionDirection = if (idx >= currentTrackIndex) 1 else -1
         loadAndStart(idx, autoPlay = true)
+    }
+
+    /** Updates displayed position immediately during smooth slider drag without flooding MediaPlayer.seekTo(). */
+    fun previewScrubFraction(fraction: Float) {
+        val clamped = (fraction.coerceIn(0f, 1f) * durationMs).toLong().coerceIn(0L, durationMs)
+        currentPositionMs = clamped
     }
 
     fun seekToFraction(fraction: Float) {

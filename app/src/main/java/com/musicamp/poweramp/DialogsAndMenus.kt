@@ -113,7 +113,7 @@ fun PowerampMainMenuOverlay(controller: PowerampController) {
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "POWERAMP",
+                    text = "MUSICAMP",
                     color = ThemeBerryPrimary,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Black,
@@ -1914,7 +1914,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Text(
-                                    text = "POWERAMP",
+                                    text = "MUSICAMP",
                                     color = PowerampTextPrimary,
                                     fontSize = 24.sp,
                                     fontWeight = FontWeight.Black,
@@ -1997,7 +1997,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                     Triple("Library", "Rescan, music folders, list, queue options", Color(0xFF5A739C) to Icons.Filled.Folder),
                     Triple("Headset/Bluetooth", "Resume on connection, buttons, DVC per output", Color(0xFF4F87A8) to Icons.Filled.Tune),
                     Triple("Misc", "Tweaks, export/import settings, battery optimization", PowerampTextSecondary to Icons.Filled.Settings),
-                    Triple("About", "Poweramp build-1013-uni (Full Version)", Color(0xFF5C6B73) to Icons.Filled.Info)
+                    Triple("About", "MusicAmp build-1013-uni (Full Version)", Color(0xFF5C6B73) to Icons.Filled.Info)
                 )
 
                 items(itemsList) { (title, summary, colorAndIcon) ->

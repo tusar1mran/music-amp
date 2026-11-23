@@ -1,9 +1,12 @@
 package com.musicamp.poweramp
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Bundle
+import android.view.Display
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
@@ -29,6 +32,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,6 +47,12 @@ import androidx.core.view.WindowCompat
 class MainActivity : ComponentActivity() {
 
     private lateinit var controller: PowerampController
+    private var displayManager: DisplayManager? = null
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) = syncDisplayRefreshRate()
+        override fun onDisplayRemoved(displayId: Int) = syncDisplayRefreshRate()
+        override fun onDisplayChanged(displayId: Int) = syncDisplayRefreshRate()
+    }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -60,6 +73,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.setBackgroundDrawableResource(android.R.color.black)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         val insetsController = WindowCompat.getInsetsController(window, window.decorView)
         insetsController.isAppearanceLightStatusBars = false
@@ -67,6 +81,7 @@ class MainActivity : ComponentActivity() {
         // The controller lives in the Application so playback survives the Activity being closed
         controller = (application as PowerampApp).controller
         controller.recordPermissionRequester = { recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
+        enableAdaptiveHighRefreshRate()
         requestAudioPermissionsIfNeeded()
 
         onBackPressedDispatcher.addCallback(
@@ -125,7 +140,14 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             ) {
-                PowerampRootApp(controller = controller)
+                var showSplash by rememberSaveable { mutableStateOf(true) }
+                Box(modifier = Modifier.fillMaxSize()) {
+                    PowerampRootApp(controller = controller)
+                    MusicAmpSplashOverlay(
+                        visible = showSplash,
+                        onFinished = { showSplash = false }
+                    )
+                }
             }
         }
     }
@@ -152,8 +174,58 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun enableAdaptiveHighRefreshRate() {
+        try {
+            val dm = getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+            displayManager = dm
+            dm?.registerDisplayListener(displayListener, null)
+
+            val currentDisplay: Display? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                display
+            } else {
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay
+            }
+            if (currentDisplay != null) {
+                val activeMode = currentDisplay.mode
+                val bestMode = currentDisplay.supportedModes
+                    .filter {
+                        it.physicalWidth == activeMode.physicalWidth &&
+                            it.physicalHeight == activeMode.physicalHeight
+                    }
+                    .maxByOrNull { it.refreshRate }
+                if (bestMode != null && bestMode.refreshRate > activeMode.refreshRate + 0.5f) {
+                    val lp = window.attributes
+                    lp.preferredDisplayModeId = bestMode.modeId
+                    window.attributes = lp
+                }
+            }
+            syncDisplayRefreshRate()
+        } catch (_: Exception) {
+            controller.displayRefreshRateHz = 60f
+        }
+    }
+
+    private fun syncDisplayRefreshRate() {
+        try {
+            val currentDisplay: Display? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                display
+            } else {
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay
+            }
+            val hz = currentDisplay?.refreshRate ?: 60f
+            controller.displayRefreshRateHz = hz.coerceIn(30f, 240f)
+        } catch (_: Exception) {
+        }
+    }
+
     override fun onDestroy() {
         // Don't keep a reference to a destroyed Activity inside the app-wide controller
+        try {
+            displayManager?.unregisterDisplayListener(displayListener)
+        } catch (_: Exception) {
+        }
         controller.recordPermissionRequester = null
         super.onDestroy()
     }
@@ -287,20 +359,20 @@ fun PowerampRootApp(controller: PowerampController) {
         if (controller.showAlbumArtDialog) {
             PowerampSimpleInfoDialog(
                 title = "Album Art",
-                body = "Current track uses Poweramp's default High-Contrast Vector Mountain artwork.\n\nResolution: 1080×1080 (Hi-Res Vector)\nCache: Verified",
+                body = "Current track uses MusicAmp's default High-Contrast Vector Mountain artwork.\n\nResolution: 1080×1080 (Hi-Res Vector)\nCache: Verified",
                 onDismiss = { controller.showAlbumArtDialog = false }
             )
         }
         if (controller.showChangelogDialog) {
             PowerampSimpleInfoDialog(
-                title = "Poweramp build-1013-uni",
+                title = "MusicAmp build-1013-uni",
                 body = "• 10-Band Graphic & Parametric Equalizer with Preamp\n• Real-time Bass & Treble Tone Knobs\n• Stereo Expand, Balance, Tempo (0.5x - 2.0x) & Mono DSP\n• Full Reverb Engine (Damp, Filter, Fade, Pre-Delay, Pre-Delay Mix, Size, Mix)\n• Dynamic Scrolling Waveseek Bar & Centered-Spectrum / Milkdrop Visualization\n• 19 Library Categories, Bookmarks, Queue & Tag Editor",
                 onDismiss = { controller.showChangelogDialog = false }
             )
         }
         if (controller.showHelpDialog) {
             PowerampSimpleInfoDialog(
-                title = "Poweramp Help & Gestures",
+                title = "MusicAmp Help & Gestures",
                 body = "• Swipe left/right on Album Art or Mini-player to change track with slide animation\n• Drag across the Waveseek bars to scrub track position\n• Double-tap any Rotary Knob or EQ Slider to reset to 0.0\n• Long-press any track in Library or Search for the Track Context Menu",
                 onDismiss = { controller.showHelpDialog = false }
             )

@@ -54,10 +54,27 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.ThumbDown
 import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.zIndex
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -284,9 +301,16 @@ fun PowerampMountainArtwork(
  */
 @Composable
 fun rememberTrackArt(controller: PowerampController, track: AudioTrack?): ImageBitmap? {
-    val art by produceState<ImageBitmap?>(initialValue = null, track?.id) {
-        value = null
-        value = track?.let { controller.loadArt(it)?.asImageBitmap() }
+    val cached = remember(track?.id) {
+        track?.id?.let { controller.getCachedArt(it)?.asImageBitmap() }
+    }
+    val art by produceState<ImageBitmap?>(initialValue = cached, track?.id) {
+        if (cached != null) {
+            value = cached
+        } else {
+            value = null
+            value = track?.let { controller.loadArt(it)?.asImageBitmap() }
+        }
     }
     return art
 }
@@ -384,7 +408,8 @@ fun TrackThumb(
 
 /**
  * Album art carousel: centre card with the current track's real artwork and peeking cards for the
- * previous / next track. Swipe left or right to change track.
+ * previous / next track. Smooth GPU-accelerated drag tracking, scale/fade morphing, and animated
+ * track transitions (both swipe and Next/Previous button presses).
  */
 @Composable
 fun BerryAlbumArtCarousel(
@@ -398,41 +423,167 @@ fun BerryAlbumArtCarousel(
     val prevArt = rememberTrackArt(controller, prevTrack)
     val nextArt = rememberTrackArt(controller, nextTrack)
 
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
+
+    // Distance in px from center card to the side peeking slot
+    val cardSpanPx = with(density) { 210.dp.toPx() }
+    val dragOffsetX = remember { Animatable(0f) }
+    var isDragging by remember { mutableStateOf(false) }
+    var skipNextTrackChangeAnim by remember { mutableStateOf(false) }
+    var lastTrackId by remember { mutableStateOf(track?.id) }
+
+    // Smooth slide-in animation when track changes via Next/Prev buttons or auto-advance
+    LaunchedEffect(track?.id) {
+        val currentId = track?.id
+        if (lastTrackId != null && currentId != null && currentId != lastTrackId) {
+            if (skipNextTrackChangeAnim) {
+                skipNextTrackChangeAnim = false
+            } else if (controller.trackSlideTransitions) {
+                val incomingFrom = if (controller.trackTransitionDirection >= 0) cardSpanPx * 0.72f else -cardSpanPx * 0.72f
+                dragOffsetX.snapTo(incomingFrom)
+                dragOffsetX.animateTo(
+                    targetValue = 0f,
+                    animationSpec = spring(
+                        dampingRatio = 0.86f,
+                        stiffness = Spring.StiffnessMediumLow
+                    )
+                )
+            }
+        }
+        lastTrackId = currentId
+    }
+
+    val normalizedProgress = (dragOffsetX.value / cardSpanPx).coerceIn(-1.2f, 1.2f)
+    val absProgress = kotlin.math.abs(normalizedProgress).coerceIn(0f, 1f)
+
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(215.dp)
-            .pointerInput(Unit) {
-                var totalDx = 0f
-                detectDragGestures(
-                    onDragStart = { totalDx = 0f },
-                    onDragEnd = {
-                        if (totalDx > 60f) {
-                            controller.previousTrackOrRestart()
-                        } else if (totalDx < -60f) {
-                            controller.nextTrack()
+            .pointerInput(cardSpanPx) {
+                var lastDeltaX = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = {
+                        isDragging = true
+                        lastDeltaX = 0f
+                    },
+                    onDragCancel = {
+                        isDragging = false
+                        scope.launch {
+                            dragOffsetX.animateTo(
+                                0f,
+                                spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
+                            )
                         }
                     },
-                    onDrag = { change, dragAmount ->
+                    onDragEnd = {
+                        isDragging = false
+                        val currentOffset = dragOffsetX.value
+                        val threshold = cardSpanPx * 0.26f
+                        val fastNext = lastDeltaX < -18f && currentOffset < -24f
+                        val fastPrev = lastDeltaX > 18f && currentOffset > 24f
+                        when {
+                            currentOffset < -threshold || fastNext -> {
+                                scope.launch {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    dragOffsetX.animateTo(
+                                        -cardSpanPx,
+                                        tween(durationMillis = 190, easing = FastOutSlowInEasing)
+                                    )
+                                    skipNextTrackChangeAnim = true
+                                    controller.nextTrack()
+                                    dragOffsetX.snapTo(0f)
+                                }
+                            }
+                            currentOffset > threshold || fastPrev -> {
+                                scope.launch {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    dragOffsetX.animateTo(
+                                        cardSpanPx,
+                                        tween(durationMillis = 190, easing = FastOutSlowInEasing)
+                                    )
+                                    skipNextTrackChangeAnim = true
+                                    controller.previousTrackOrRestart()
+                                    dragOffsetX.snapTo(0f)
+                                }
+                            }
+                            else -> {
+                                scope.launch {
+                                    dragOffsetX.animateTo(
+                                        0f,
+                                        spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    onHorizontalDrag = { change, dragAmount ->
                         change.consume()
-                        totalDx += dragAmount.x
+                        lastDeltaX = dragAmount
+                        scope.launch {
+                            dragOffsetX.snapTo((dragOffsetX.value + dragAmount).coerceIn(-cardSpanPx * 1.1f, cardSpanPx * 1.1f))
+                        }
                     }
                 )
             },
         contentAlignment = Alignment.Center
     ) {
+        // Previous peeking card (slides into center and scales up when dragging right)
+        val prevFocus = normalizedProgress.coerceIn(0f, 1f)
+        val prevScale = 0.795f + (1f - 0.795f) * prevFocus
+        val prevAlpha = 0.72f + 0.28f * prevFocus
         ArtCard(
-            art = prevArt, track = prevTrack, corner = 16.dp,
-            modifier = Modifier.align(Alignment.CenterStart).offset(x = (-26).dp).size(155.dp)
-        )
-        ArtCard(
-            art = nextArt, track = nextTrack, corner = 16.dp,
-            modifier = Modifier.align(Alignment.CenterEnd).offset(x = 26.dp).size(155.dp)
-        )
-        ArtCard(
-            art = art, track = track, corner = 18.dp,
+            art = prevArt,
+            track = prevTrack,
+            corner = 18.dp,
             modifier = Modifier
                 .size(195.dp)
+                .zIndex(if (prevFocus > 0.5f) 2f else 0f)
+                .graphicsLayer {
+                    translationX = -cardSpanPx + dragOffsetX.value
+                    scaleX = prevScale
+                    scaleY = prevScale
+                    alpha = prevAlpha
+                }
+        )
+
+        // Next peeking card (slides into center and scales up when dragging left)
+        val nextFocus = (-normalizedProgress).coerceIn(0f, 1f)
+        val nextScale = 0.795f + (1f - 0.795f) * nextFocus
+        val nextAlpha = 0.72f + 0.28f * nextFocus
+        ArtCard(
+            art = nextArt,
+            track = nextTrack,
+            corner = 18.dp,
+            modifier = Modifier
+                .size(195.dp)
+                .zIndex(if (nextFocus > 0.5f) 2f else 0f)
+                .graphicsLayer {
+                    translationX = cardSpanPx + dragOffsetX.value
+                    scaleX = nextScale
+                    scaleY = nextScale
+                    alpha = nextAlpha
+                }
+        )
+
+        // Center active card (follows finger, scales down smoothly as it leaves center)
+        val centerScale = 1f - (1f - 0.795f) * absProgress
+        val centerAlpha = 1f - 0.28f * absProgress
+        ArtCard(
+            art = art,
+            track = track,
+            corner = 18.dp,
+            modifier = Modifier
+                .size(195.dp)
+                .zIndex(if (absProgress <= 0.5f) 2f else 1f)
+                .graphicsLayer {
+                    translationX = dragOffsetX.value
+                    scaleX = centerScale
+                    scaleY = centerScale
+                    alpha = centerAlpha
+                }
                 .pointerInput(Unit) { detectTapGestures(onLongPress = { controller.cycleVisMode() }) },
             spectrum = if (controller.visMode != VisMode.DISABLED) controller.liveSpectrumAmplitudes else null
         )
@@ -440,31 +591,44 @@ fun BerryAlbumArtCarousel(
 }
 
 /**
- * Symmetrical soundwave waveform matching the target Now Playing design from WhatsApp:
- * Mirrored vertically around the horizontal center line, with berry played bars and light silver unplayed bars.
+ * Symmetrical soundwave waveform seek bar:
+ * - Zero-lag finger scrubbing at native refresh rate (60/90/120Hz+)
+ * - Coalesces MediaPlayer seeks so audio & UI stay silky smooth while dragging
+ * - Smooth sub-bar color interpolation + glowing scrubber cursor while dragging
  */
 @Composable
 fun BerrySymmetricalWaveform(
     bars: List<Float>,
     progress: Float,
     onSeek: (Float) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onScrubStart: () -> Unit = {},
+    onScrubPreview: (Float) -> Unit = {},
+    onScrubEnd: (Float) -> Unit = onSeek
 ) {
+    val currentOnSeek by rememberUpdatedState(onSeek)
+    val currentOnScrubStart by rememberUpdatedState(onScrubStart)
+    val currentOnScrubPreview by rememberUpdatedState(onScrubPreview)
+    val currentOnScrubEnd by rememberUpdatedState(onScrubEnd)
+    val haptics = LocalHapticFeedback.current
+
+    var isDragging by remember { mutableStateOf(false) }
+    var dragFraction by remember { mutableFloatStateOf(progress.coerceIn(0f, 1f)) }
+    val activeAccent = ThemeBerryAccent
+    val inactiveColor = ThemeWaveUnplayed
+
     val barAmplitudes = remember(bars) {
         if (bars.isNotEmpty() && bars.size >= 36) {
-            // Pool down to at most 42 bars covering the WHOLE track (not just its first half)
-            val target = minOf(42, bars.size)
+            val target = minOf(44, bars.size)
             List(target) { i ->
                 val from = i * bars.size / target
                 val to = maxOf(from + 1, (i + 1) * bars.size / target)
                 bars.subList(from, to).average().toFloat()
             }
         } else {
-            // Symmetrical natural soundwave envelope shape
-            val count = 40
+            val count = 42
             List(count) { i ->
                 val norm = i.toFloat() / (count - 1)
-                // Diamond audio burst envelope
                 val env = sin(norm * PI.toFloat()).coerceIn(0.25f, 1f)
                 val variation = 0.35f + 0.65f * ((i * 7 + 3) % 11) / 10f
                 (env * variation).coerceIn(0.2f, 0.95f)
@@ -472,18 +636,45 @@ fun BerrySymmetricalWaveform(
         }
     }
 
+    val displayProgress = (if (isDragging) dragFraction else progress).coerceIn(0f, 1f)
+
     Canvas(
         modifier = modifier
             .pointerInput(Unit) {
                 detectTapGestures { offset ->
-                    onSeek((offset.x / size.width).coerceIn(0f, 1f))
+                    val frac = (offset.x / size.width).coerceIn(0f, 1f)
+                    dragFraction = frac
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    currentOnSeek(frac)
                 }
             }
             .pointerInput(Unit) {
-                detectDragGestures { change, _ ->
-                    change.consume()
-                    onSeek((change.position.x / size.width).coerceIn(0f, 1f))
-                }
+                detectHorizontalDragGestures(
+                    onDragStart = { startOffset ->
+                        isDragging = true
+                        val frac = (startOffset.x / size.width).coerceIn(0f, 1f)
+                        dragFraction = frac
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        currentOnScrubStart()
+                        currentOnScrubPreview(frac)
+                    },
+                    onDragEnd = {
+                        val finalFrac = dragFraction
+                        isDragging = false
+                        currentOnScrubEnd(finalFrac)
+                    },
+                    onDragCancel = {
+                        val finalFrac = dragFraction
+                        isDragging = false
+                        currentOnScrubEnd(finalFrac)
+                    },
+                    onHorizontalDrag = { change, _ ->
+                        change.consume()
+                        val frac = (change.position.x / size.width).coerceIn(0f, 1f)
+                        dragFraction = frac
+                        currentOnScrubPreview(frac)
+                    }
+                )
             }
     ) {
         val w = size.width
@@ -495,22 +686,52 @@ fun BerrySymmetricalWaveform(
         val barWidth = ((w - totalGaps) / count).coerceIn(2.5.dp.toPx(), 6.dp.toPx())
         val actualTotalWidth = count * barWidth + (count - 1) * gap
         val startX = (w - actualTotalWidth) / 2f
+        val headX = startX + displayProgress * actualTotalWidth
 
         for (i in 0 until count) {
             val bx = startX + i * (barWidth + gap)
-            val frac = (bx - startX) / actualTotalWidth
-            val isPlayed = frac <= progress.coerceIn(0f, 1f)
+            val barEnd = bx + barWidth
+            // Smooth sub-bar color blend so progress glides pixel-by-pixel instead of jumping bar-by-bar
+            val barFill = ((headX - bx) / barWidth).coerceIn(0f, 1f)
+            val barColor = when {
+                barFill >= 1f -> activeAccent
+                barFill <= 0f -> inactiveColor
+                else -> lerp(inactiveColor, activeAccent, barFill)
+            }
 
             val amp = barAmplitudes[i]
-            val barHalfHeight = (h * 0.44f * amp).coerceAtLeast(3.dp.toPx())
-
-            val barColor = if (isPlayed) ThemeBerryAccent else ThemeWaveUnplayed
+            // Subtle magnification on the bar right under the playhead while scrubbing
+            val proximityBoost = if (isDragging) {
+                val dist = kotlin.math.abs((bx + barEnd) * 0.5f - headX)
+                val boost = (1f - (dist / (barWidth * 3.5f))).coerceIn(0f, 1f)
+                1f + 0.22f * boost
+            } else 1f
+            val barHalfHeight = (h * 0.42f * amp * proximityBoost).coerceIn(3.dp.toPx(), h * 0.48f)
 
             drawRoundRect(
                 color = barColor,
                 topLeft = Offset(bx, centerY - barHalfHeight),
                 size = Size(barWidth, barHalfHeight * 2f),
                 cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
+            )
+        }
+
+        // Sleek glowing playhead needle while scrubbing
+        if (isDragging) {
+            val clampedHeadX = headX.coerceIn(startX, startX + actualTotalWidth)
+            drawLine(
+                color = activeAccent.copy(alpha = 0.35f),
+                start = Offset(clampedHeadX, 2.dp.toPx()),
+                end = Offset(clampedHeadX, h - 2.dp.toPx()),
+                strokeWidth = 6.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = Color.White,
+                start = Offset(clampedHeadX, 2.dp.toPx()),
+                end = Offset(clampedHeadX, h - 2.dp.toPx()),
+                strokeWidth = 2.4.dp.toPx(),
+                cap = StrokeCap.Round
             )
         }
     }
@@ -979,10 +1200,16 @@ fun PowerampEqBandSlider(
 
     // Snap while the finger is down (zero lag), glide for presets / reset / tap.
     val animatedDbState = remember { Animatable(dbValue.coerceIn(-15f, 15f)) }
-    LaunchedEffect(dbValue, isDragging) {
-        val target = dbValue.coerceIn(-15f, 15f)
-        if (isDragging) animatedDbState.snapTo(target)
-        else animatedDbState.animateTo(target, tween(durationMillis = 220, easing = FastOutSlowInEasing))
+    LaunchedEffect(if (isDragging) null else dbValue) {
+        if (!isDragging) {
+            val target = dbValue.coerceIn(-15f, 15f)
+            animatedDbState.animateTo(target, tween(durationMillis = 200, easing = FastOutSlowInEasing))
+        }
+    }
+    LaunchedEffect(isDragging) {
+        if (!isDragging) {
+            animatedDbState.snapTo(dragDb.coerceIn(-15f, 15f))
+        }
     }
 
     val effectiveDb = if (isDragging) dragDb else animatedDbState.value
@@ -1579,30 +1806,137 @@ fun LibraryCategoryBadge(
 }
 
 /**
- * Vertical A-Z Fast Scroller Strip on the right edge of Library / All Songs (`09_all_songs.png`).
+ * Interactive Vertical A-Z Fast Scroller Strip on the right edge of Library / All Songs.
+ * Supports both tap and continuous vertical drag with haptic ticks and active-letter highlighting.
  */
 @Composable
 fun PowerampAlphabetScroller(
-    onLetterSelected: (Char) -> Unit,
+    onLetterSelected: (letter: Char, isDragging: Boolean) -> Unit,
+    onActiveLetterChanged: (letter: Char?, yFraction: Float) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
-    val letters = listOf('˄', '0', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '#')
+    val letters = remember {
+        listOf('˄', '0', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '#')
+    }
+    val currentOnLetterSelected by rememberUpdatedState(onLetterSelected)
+    val currentOnActiveChanged by rememberUpdatedState(onActiveLetterChanged)
+    val haptics = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+    var activeLetter by remember { mutableStateOf<Char?>(null) }
+    var dismissJob by remember { mutableStateOf<Job?>(null) }
+
     Column(
         modifier = modifier
-            .width(20.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color(0x99121315))
+            .width(24.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xA6121315))
+            .pointerInput(letters) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    dismissJob?.cancel()
+
+                    fun letterAt(y: Float): Pair<Char, Float> {
+                        val h = size.height.toFloat().coerceAtLeast(1f)
+                        val frac = (y / h).coerceIn(0f, 0.9999f)
+                        val idx = (frac * letters.size).toInt().coerceIn(0, letters.lastIndex)
+                        return letters[idx] to frac
+                    }
+
+                    val (initialChar, initialFrac) = letterAt(down.position.y)
+                    activeLetter = initialChar
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    currentOnActiveChanged(initialChar, initialFrac)
+                    currentOnLetterSelected(initialChar, false)
+
+                    var lastChar = initialChar
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) {
+                            change.consume()
+                            break
+                        }
+                        change.consume()
+                        val (ch, frac) = letterAt(change.position.y)
+                        currentOnActiveChanged(ch, frac)
+                        if (ch != lastChar) {
+                            lastChar = ch
+                            activeLetter = ch
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            currentOnLetterSelected(ch, true)
+                        }
+                    }
+
+                    // Keep the big letter bubble visible briefly after release for clear tap feedback
+                    dismissJob?.cancel()
+                    dismissJob = scope.launch {
+                        delay(420L)
+                        activeLetter = null
+                        currentOnActiveChanged(null, 0.5f)
+                    }
+                }
+            }
             .padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceEvenly
     ) {
         letters.forEach { ch ->
+            val isActive = activeLetter == ch
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = ch.toString(),
+                    color = if (isActive) ThemeBerryPrimary else Color(0xFFB5B7BC),
+                    fontSize = if (isActive) 11.sp else 8.5.sp,
+                    lineHeight = if (isActive) 11.sp else 9.sp,
+                    fontWeight = if (isActive) FontWeight.ExtraBold else FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Large animated floating Alphabet Bubble shown when tapping or dragging on [PowerampAlphabetScroller].
+ */
+@Composable
+fun PowerampAlphabetBubble(
+    letter: Char?,
+    modifier: Modifier = Modifier
+) {
+    val lastNonNull = remember { mutableStateOf('A') }
+    if (letter != null) lastNonNull.value = letter
+
+    AnimatedVisibility(
+        visible = letter != null,
+        enter = scaleIn(
+            initialScale = 0.55f,
+            animationSpec = spring(dampingRatio = 0.68f, stiffness = 480f)
+        ) + fadeIn(tween(110)),
+        exit = scaleOut(
+            targetScale = 0.72f,
+            animationSpec = tween(160, easing = FastOutSlowInEasing)
+        ) + fadeOut(tween(150)),
+        modifier = modifier
+    ) {
+        Box(
+            modifier = Modifier
+                .size(86.dp)
+                .clip(RoundedCornerShape(topStart = 43.dp, topEnd = 43.dp, bottomStart = 43.dp, bottomEnd = 12.dp))
+                .background(PowerampDialogBg.copy(alpha = 0.96f))
+                .border(2.2.dp, ThemeBerryPrimary, RoundedCornerShape(topStart = 43.dp, topEnd = 43.dp, bottomStart = 43.dp, bottomEnd = 12.dp)),
+            contentAlignment = Alignment.Center
+        ) {
             Text(
-                text = ch.toString(),
-                color = Color(0xFFB5B7BC),
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.clickable { onLetterSelected(ch) }
+                text = lastNonNull.value.toString(),
+                color = ThemeBerryPrimary,
+                fontSize = 40.sp,
+                fontWeight = FontWeight.Black
             )
         }
     }
