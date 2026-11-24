@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+:root {
+  --ma-bg: #ffffff;
+  --ma-bg-alt: #f7f8fa;
+  --ma-surface: #f7f8fa;
+  --ma-pill: #f0f2f6;
+  --ma-dialog: #ffffff;
+  --ma-border: #e2e4e9;
+  --ma-border-subtle: #eceef2;
+  --ma-text: #16171a;
+  --ma-text-muted: #656a75;
+  --ma-wave-unplayed: #c5cad4;
+
+  --ma-accent: #00a814;
+  --ma-accent-dark: #00b812;
+  --ma-accent-light: #6bff7b;
+  --ma-on-accent: #ffffff;
+  --ma-highlight: rgba(107, 255, 123, 0.28);
+  --ma-glow: rgba(0, 168, 20, 0.18);
+  --ma-blob-1: rgba(0, 184, 18, 0.12);
+  --ma-blob-2: rgba(59, 134, 232, 0.12);
+  --ma-note-band: rgba(0, 184, 18, 0.08);
+}
+
+html {
+  scroll-behavior: smooth;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: var(--ma-bg);
+  color: var(--ma-text);
+  transition: background-color 0.35s ease, color 0.35s ease;
+}
+
+body {
+  margin: 0;
+  background-color: var(--ma-bg);
+  color: var(--ma-text);
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.font-display {
+  font-family: 'Plus Jakarta Sans', 'Inter', sans-serif;
+  letter-spacing: -0.03em;
+}
+
+.font-editorial {
+  font-family: 'Newsreader', Georgia, serif;
+}
+
+.font-signature {
+  font-family: 'Caveat', cursive;
+}
+
+.font-mono-tech {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Sleek Loaf-style thin bezel phone mockup */
+.phone-frame {
+  border-radius: 42px;
+  padding: 9px;
+  background: #141518;
+  box-shadow:
+    0 30px 70px -18px rgba(0, 0, 0, 0.36),
+    0 0 0 1px rgba(255, 255, 255, 0.09) inset;
+}
+
+.phone-screen {
+  border-radius: 33px;
+  overflow: hidden;
+  background: #000;
+  position: relative;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--ma-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ma-border);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ma-text-muted);
+}

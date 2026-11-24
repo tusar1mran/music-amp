@@ -15,3 +15,10 @@ captures/
 # Temp files
 /*.png
 /*.xml
+
+# Landing page (Node / Vite / Vercel)
+node_modules/
+dist/
+.vercel/
+*.tsbuildinfo
+*.local
