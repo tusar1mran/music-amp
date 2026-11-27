@@ -22,6 +22,12 @@ import {
   ShieldCheck,
   ArrowUpRight,
   Smartphone,
+  Usb,
+  Car,
+  ListMusic,
+  Radio,
+  Tags,
+  Gauge,
 } from 'lucide-react'
 import {
   ACCENT_COLORS,
@@ -46,8 +52,8 @@ const WALKTHROUGH_STEPS = [
   },
   {
     id: 'eq',
-    label: '10-Band EQ & Rotary Knobs',
-    caption: 'Shape every band with preamp, limiter, bass & treble dials.',
+    label: 'Graphic & Parametric EQ',
+    caption: '5–32 graphic bands or a parametric EQ with AutoEQ import, plus preamp, limiter, bass & treble dials.',
   },
   {
     id: 'library',
@@ -70,15 +76,19 @@ const FAQ_GROUPS = [
     items: [
       {
         q: 'What is MusicAmp?',
-        a: 'MusicAmp is an offline-first Android music player inspired by Poweramp, built with Kotlin, Jetpack Compose, and Material 3. It pairs your local library with a 10-band equalizer, rotary DSP knobs, waveform seekbar, and live FFT visualizer.',
+        a: 'MusicAmp is an offline-first Android music player inspired by Poweramp, built with Kotlin and Jetpack Compose. It plays your local library through its own audio engine, with a graphic and parametric equalizer, ReplayGain, Direct Volume Control, hi-res and bit-perfect USB DAC output, DSD and CUE support, synced lyrics, Android Auto and home-screen widgets.',
       },
       {
         q: 'Is MusicAmp free? Are there any ads?',
         a: 'Yes, MusicAmp is completely free with zero ads, zero trackers, and no account required. Install the APK, grant audio access, and start listening right away.',
       },
       {
+        q: 'Does MusicAmp use the internet?',
+        a: 'Only for features you turn on. Album art download is off by default; when enabled it sends just the album and artist name to MusicBrainz and the Cover Art Archive, and can be limited to Wi-Fi. Internet radio streams connect to the stations you add. Everything else works offline.',
+      },
+      {
         q: 'Which Android devices are supported?',
-        a: 'MusicAmp supports Android 8.0 (API 26) and up, with adaptive high refresh rate (60/90/120Hz+) UI tuned for modern Android phones.',
+        a: 'MusicAmp supports Android 8.0 (API 26) and up, with an adaptive high refresh rate UI (60/90/120 Hz+). Bit-perfect USB DAC output needs Android 14 or newer, and Material You colours need Android 12 or newer.',
       },
     ],
   },
@@ -89,8 +99,16 @@ const FAQ_GROUPS = [
     icon: Sliders,
     items: [
       {
-        q: 'How does the 10-band equalizer and limiter work?',
-        a: 'All 10 EQ bands, bass/treble shelves, preamp (LoudnessEnhancer), stereo expand (Virtualizer), tempo (0.5x–3x with pitch kept), and room reverb run on a single shared Android AudioFX session across every track. The limiter automatically prevents clipping when you boost bands.',
+        q: 'How does the equalizer work?',
+        a: 'MusicAmp decodes audio itself and runs its own DSP chain in 64-bit filters: a graphic EQ with 5, 10, 15, 31 or a custom 5–32 bands, a parametric EQ (peak, shelf, low/high/band pass, per-band left/right/both) that imports AutoEQ profiles, bass and treble, stereo width, mono, reverb and a peak limiter that lights up when it is working. A per-output preset can follow your speaker, wired, Bluetooth or USB device, or even a single song.',
+      },
+      {
+        q: 'What are bit-perfect output and DSD support?',
+        a: 'With a USB DAC on Android 14+, bit-perfect mode sends the decoded audio to the DAC untouched at the track’s own sample rate (16, 24 or 32-bit), bypassing the Android mixer and all effects. DSD files (DSF/DFF) play as PCM, or as DoP on a DoP-capable DAC in bit-perfect mode. Because Android doesn’t list DSD files as music, you grant their folder once in Settings › Library.',
+      },
+      {
+        q: 'What are ReplayGain and Direct Volume Control?',
+        a: 'ReplayGain reads the loudness tags in your files and evens out volume per track or per album. Direct Volume Control applies the volume inside the app with the system media volume held at maximum, which gives the equalizer headroom to boost without clipping; your volume keys keep working.',
       },
       {
         q: 'What is special about the rotary knobs?',
@@ -110,15 +128,19 @@ const FAQ_GROUPS = [
     items: [
       {
         q: 'Which themes and accent colors are included?',
-        a: 'MusicAmp includes 5 theme modes (Poweramp default, Light, Dark, Black OLED, and Follow System) plus 8 accent colors: Poweramp Green, Berry, Blue, Green, Orange, Teal, Purple, and Red.',
+        a: 'MusicAmp includes 5 theme modes (Poweramp default, Light, Dark, Black OLED, and Follow System) plus 8 accent colors: Poweramp Green, Berry, Blue, Green, Orange, Teal, Purple, and Red. On Android 12+ you can also pick Material You to follow your wallpaper colours.',
       },
       {
         q: 'Does it remember my queue, EQ, and playback position?',
-        a: 'Yes. MusicAmp saves your last track and exact position, EQ presets, DSP knobs, reverb, playlists, bookmarks, ratings, play counts, and queue between runs.',
+        a: 'Yes. MusicAmp saves your last track and exact position, EQ presets, DSP knobs, reverb, playlists, bookmarks, ratings, play counts, sort order and view style, and queue between runs.',
       },
       {
-        q: 'Does it work with Bluetooth, lock-screen, and calls?',
-        a: 'Yes. Playback runs in a foreground MediaSession service with lock-screen controls, headset/Bluetooth media buttons, automatic pause on unplug, and audio focus ducking for calls and notifications.',
+        q: 'Does it work with Bluetooth, Android Auto, and the lock screen?',
+        a: 'Yes. Playback runs in a foreground media service with lock-screen and notification controls (you choose the buttons), headset and Bluetooth buttons, Android Auto browsing and voice search, home-screen widgets in three sizes, pause on unplug and resume when your headphones reconnect.',
+      },
+      {
+        q: 'Can it edit tags, import playlists and show lyrics?',
+        a: 'Yes. Tag edits are written into FLAC and MP3 files (other formats keep the edit inside MusicAmp), m3u, m3u8 and pls playlists import and export, CUE sheets split album images into tracks, and LRC lyrics scroll in time with the music.',
       },
     ],
   },
@@ -463,8 +485,9 @@ export default function App() {
             </h1>
 
             <p className="gsap-hero mt-5 max-w-[440px] text-lg leading-relaxed text-[var(--ma-text-muted)]">
-              10-band equalizer, tactile rotary DSP knobs, waveform seekbar, and
-              live FFT spectrum — built for your local tracks.{' '}
+              Its own audio engine with graphic and parametric EQ, bit-perfect
+              USB DAC output, DSD and ReplayGain — plus tactile rotary knobs
+              and a live FFT spectrum, built for your local tracks.{' '}
               <span className="inline-block text-[var(--ma-accent)]">✦</span>
             </p>
 
@@ -496,7 +519,7 @@ export default function App() {
             </div>
 
             <p className="gsap-hero mt-4 text-xs font-medium text-[var(--ma-text-muted)]">
-              Free offline playback &amp; 10-band DSP. Zero ads.
+              Free offline playback · Hi-Res &amp; DSD · Zero ads.
             </p>
 
             <a
@@ -559,8 +582,9 @@ export default function App() {
             </h2>
             <p className="mt-4 text-base leading-relaxed text-[var(--ma-text-muted)]">
               Drag any of the 10 graphic bands or tap a preset right here. Inside
-              MusicAmp, every change maps directly onto a shared Android AudioFX
-              session with zero stutter.
+              MusicAmp you can go from 5 to 32 bands, switch to a parametric EQ,
+              or import an AutoEQ profile for your headphones — all processed by
+              MusicAmp’s own engine, glitch-free while the music plays.
             </p>
             <a
               href="#walkthrough"
@@ -605,7 +629,7 @@ export default function App() {
             <div className="relative z-10 w-[260px] sm:w-[290px]">
               <PhoneMockup
                 src={screens.eq}
-                alt="MusicAmp 10-Band Equalizer and Rotary Knobs"
+                alt="MusicAmp Equalizer and Rotary Knobs"
               />
             </div>
           </div>
@@ -619,7 +643,8 @@ export default function App() {
             <p className="mt-4 max-w-md text-base leading-relaxed text-[var(--ma-text-muted)]">
               Boost sub-bass, lift vocals, widen the stereo field, or dial in
               hall reverb without harsh distortion. The built-in Limiter
-              automatically reins in peaks so your headphones always sound clean.
+              reins in peaks (and lights up when it does), while Direct Volume
+              Control keeps headroom for every boost.
             </p>
 
             {/* Interactive Rotary Knobs Mini-Playground */}
@@ -879,8 +904,43 @@ export default function App() {
             {[
               {
                 icon: ShieldCheck,
-                title: '100% offline, zero ads.',
-                desc: 'No account walls, no streaming clutter, and no tracking. Your local FLAC, MP3, and WAV files stay completely yours.',
+                title: 'Offline by default, zero ads.',
+                desc: 'No account walls and no tracking. Your FLAC, MP3, WAV and DSD files stay yours; album art download and radio streams only go online when you turn them on.',
+              },
+              {
+                icon: Usb,
+                title: 'Hi-Res & bit-perfect USB DAC',
+                desc: '32-bit float output at each track’s own sample rate, and bit-perfect 16/24/32-bit output to USB DACs on Android 14+, with DoP for DSD.',
+              },
+              {
+                icon: Sliders,
+                title: 'Graphic, parametric & AutoEQ',
+                desc: '5–32 graphic bands, a parametric EQ with per-channel bands, AutoEQ profile import, and presets that follow your output, device or song.',
+              },
+              {
+                icon: Gauge,
+                title: 'ReplayGain & Direct Volume Control',
+                desc: 'Even loudness per track or album, and volume applied inside the app so EQ boosts don’t clip. A limiter light shows when peaks are caught.',
+              },
+              {
+                icon: Disc3,
+                title: 'DSD, CUE & gapless',
+                desc: 'DSF and DFF playback, CUE sheets that split album images into tracks, gapless transitions, crossfade and A-B repeat.',
+              },
+              {
+                icon: Car,
+                title: 'Android Auto & widgets',
+                desc: 'Browse and voice-search your library in the car, three home-screen widget sizes, custom notification buttons and an optional lock-screen player.',
+              },
+              {
+                icon: Tags,
+                title: 'Tags, lyrics & playlists',
+                desc: 'Edit tags right in FLAC and MP3 files, synced LRC lyrics, m3u/m3u8/pls import and export, sort orders and grid views.',
+              },
+              {
+                icon: Radio,
+                title: 'Internet radio & scrobbling',
+                desc: 'Add http radio streams, and scrobble to Last.fm through the Simple Last.fm Scrobbler app — no keys stored in MusicAmp.',
               },
               {
                 icon: Waves,
@@ -888,14 +948,9 @@ export default function App() {
                 desc: 'Decoded audio waveforms cache to disk for instant scrubbing, plus a live FFT spectrum overlay right over album art.',
               },
               {
-                icon: Headphones,
-                title: 'Built for everyday listening',
-                desc: 'Foreground MediaSession service with lock-screen controls, Bluetooth buttons, call ducking, and auto-pause on unplug.',
-              },
-              {
-                icon: Disc3,
+                icon: ListMusic,
                 title: 'Remembers every detail',
-                desc: 'Exact track position, EQ presets, DSP knobs, reverb, queue, bookmarks, sleep timer, and playlists persist between runs.',
+                desc: 'Exact track position, EQ presets, DSP knobs, reverb, queue, bookmarks, sleep timer, playlists and view settings persist between runs.',
               },
             ].map((item) => (
               <div
@@ -946,7 +1001,8 @@ export default function App() {
                 Inspired by classic Poweramp, every gesture in MusicAmp is
                 obsessed over: rotary knobs that track your finger with zero
                 lag, a magnetic center detent with a subtle haptic tick at 0 dB,
-                and a 10-band AudioFX engine that never clips.
+                and an audio engine of its own — from a parametric EQ to
+                bit-perfect output for your DAC.
               </p>
               <p>
                 Whether you prefer pure OLED black with neon green at 2 a.m. or
@@ -988,8 +1044,8 @@ export default function App() {
                 answered.
               </h2>
               <p className="mt-4 text-sm leading-relaxed text-[var(--ma-text-muted)]">
-                Straight answers about MusicAmp’s 10-band equalizer, offline
-                library, themes, and Android support.
+                Straight answers about MusicAmp’s audio engine, equalizer,
+                hi-res output, privacy, themes, and Android support.
               </p>
 
               {/* Numbered section jump list */}
@@ -1091,7 +1147,7 @@ export default function App() {
                   Ready to hear your library properly?
                 </h3>
                 <p className="mt-1 text-sm text-[var(--ma-text-muted)]">
-                  Free Android APK · 10-band EQ · 5 themes · Zero ads.
+                  Free Android APK · Parametric EQ · Hi-Res &amp; DSD · Zero ads.
                 </p>
               </div>
             </div>
@@ -1118,7 +1174,7 @@ export default function App() {
               <span className="font-display font-bold text-[var(--ma-text)]">
                 MusicAmp
               </span>
-              <span>· Built with Kotlin, Jetpack Compose &amp; Android AudioFX</span>
+              <span>· Built with Kotlin, Jetpack Compose &amp; its own audio engine</span>
             </div>
             <div className="flex items-center gap-6">
               <a href="#dsp" className="hover:text-[var(--ma-text)]">
