@@ -90,11 +90,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -164,15 +166,36 @@ fun PowerampMountainArtwork(
             color = if (visMode == VisMode.FULL_SCREEN && isPlaying) Color(0xFF101113) else Color(0xFF1D1E20)
         )
 
-        // When Visualization is active or music is playing with visualization enabled:
-        if (visMode != VisMode.DISABLED) {
+        if (visMode != VisMode.DISABLED) drawVisualization(visPresetId, spectrumBars, visPhase, isPlaying)
+    }
+}
+
+/**
+ * Draws one visualization preset over the whole draw area. Shared by the artwork overlay,
+ * the full-screen visualization and the preset previews in the Visualization panel.
+ */
+fun DrawScope.drawVisualization(
+    presetId: String,
+    spectrumBars: List<Float>,
+    visPhase: Float,
+    isPlaying: Boolean
+) {
+    if (presetId.startsWith("spectrum-")) {
+        drawSpectrumFamily(presetId, spectrumBars, visPhase, isPlaying)
+        return
+    }
+    val w = size.width
+    val h = size.height
+    val cx = w * 0.5f
+    val cy = h * 0.5f
+    run {
             val activeAmps = if (spectrumBars.isNotEmpty()) spectrumBars else List(48) { i ->
                 if (isPlaying) {
                     ((sin(visPhase * 2f + i * 0.45f) * 0.5f + 0.5f) * 0.85f).coerceIn(0.05f, 1f)
                 } else 0.04f
             }
 
-            when (visPresetId) {
+            when (presetId) {
                 "spectrum_centered" -> {
                     // Exact match to Poweramp's `spectrum-centered` (`02_playing_t1.png`, `03_playing_t2.png`):
                     // Sharp vertical white/silver pins symmetrical around a horizontal axis
@@ -291,7 +314,6 @@ fun PowerampMountainArtwork(
                     drawPath(path2, color = Color(0xFF00E5FF), style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round))
                 }
             }
-        }
     }
 }
 
@@ -323,6 +345,8 @@ private fun ArtCard(
     corner: androidx.compose.ui.unit.Dp,
     modifier: Modifier = Modifier,
     spectrum: List<Float>? = null,
+    visPresetId: String = "spectrum_centered",
+    visPhase: Float = 0f,
     iconSize: androidx.compose.ui.unit.Dp = 56.dp
 ) {
     val shape = RoundedCornerShape(corner)
@@ -330,7 +354,7 @@ private fun ArtCard(
         modifier = modifier
             .clip(shape)
             .background(Color(0xFF2A1520))
-            .border(1.dp, Color(0x33FFFFFF), shape)
+            .then(if (corner > 0.dp) Modifier.border(1.dp, Color(0x33FFFFFF), shape) else Modifier)
     ) {
         if (art != null) {
             Image(
@@ -360,29 +384,11 @@ private fun ArtCard(
                 )
             }
         }
-        // Live spectrum overlay (long-press the artwork to switch visualization on / off)
+        // Live visualization overlay in the selected preset (Visualization panel / long-press the artwork)
         if (spectrum != null) {
             Canvas(modifier = Modifier.fillMaxSize()) {
-                drawRect(
-                    brush = Brush.verticalGradient(
-                        listOf(Color.Transparent, Color(0x66000000)),
-                        startY = size.height * 0.4f, endY = size.height
-                    )
-                )
-                val count = spectrum.size
-                if (count == 0) return@Canvas
-                val slot = size.width / count
-                val barW = (slot * 0.55f).coerceAtLeast(2.dp.toPx())
-                for (i in 0 until count) {
-                    val h = (spectrum[i].coerceIn(0f, 1f) * size.height * 0.55f).coerceAtLeast(2.dp.toPx())
-                    val x = i * slot + (slot - barW) / 2f
-                    drawRoundRect(
-                        color = Color.White.copy(alpha = 0.88f),
-                        topLeft = Offset(x, size.height - h - 6.dp.toPx()),
-                        size = Size(barW, h),
-                        cornerRadius = CornerRadius(barW / 2f, barW / 2f)
-                    )
-                }
+                drawRect(color = Color(0x40000000))
+                drawVisualization(visPresetId, spectrum, visPhase, isPlaying = true)
             }
         }
     }
@@ -415,7 +421,14 @@ fun TrackThumb(
 fun BerryAlbumArtCarousel(
     controller: PowerampController,
     track: AudioTrack?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    cardSize: Dp = 195.dp,
+    /** Centre-to-centre distance to the side cards; smaller keeps them peeking in when the card is large. */
+    cardSpan: Dp = cardSize * 1.077f,
+    /** Card height (defaults to square) and corner radius; 0 corner draws a full-bleed cover. */
+    cardHeight: Dp = cardSize,
+    cardCorner: Dp = 18.dp,
+    verticalPadding: Dp = 20.dp
 ) {
     val prevTrack = controller.peekPrevious()
     val nextTrack = controller.peekNext()
@@ -428,7 +441,7 @@ fun BerryAlbumArtCarousel(
     val haptics = LocalHapticFeedback.current
 
     // Distance in px from center card to the side peeking slot
-    val cardSpanPx = with(density) { 210.dp.toPx() }
+    val cardSpanPx = with(density) { cardSpan.toPx() }
     val dragOffsetX = remember { Animatable(0f) }
     var isDragging by remember { mutableStateOf(false) }
     var skipNextTrackChangeAnim by remember { mutableStateOf(false) }
@@ -461,7 +474,7 @@ fun BerryAlbumArtCarousel(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(215.dp)
+            .height(cardHeight + verticalPadding)
             .pointerInput(cardSpanPx) {
                 var lastDeltaX = 0f
                 detectHorizontalDragGestures(
@@ -537,9 +550,9 @@ fun BerryAlbumArtCarousel(
         ArtCard(
             art = prevArt,
             track = prevTrack,
-            corner = 18.dp,
+            corner = cardCorner,
             modifier = Modifier
-                .size(195.dp)
+                .size(cardSize, cardHeight)
                 .zIndex(if (prevFocus > 0.5f) 2f else 0f)
                 .graphicsLayer {
                     translationX = -cardSpanPx + dragOffsetX.value
@@ -556,9 +569,9 @@ fun BerryAlbumArtCarousel(
         ArtCard(
             art = nextArt,
             track = nextTrack,
-            corner = 18.dp,
+            corner = cardCorner,
             modifier = Modifier
-                .size(195.dp)
+                .size(cardSize, cardHeight)
                 .zIndex(if (nextFocus > 0.5f) 2f else 0f)
                 .graphicsLayer {
                     translationX = cardSpanPx + dragOffsetX.value
@@ -574,9 +587,9 @@ fun BerryAlbumArtCarousel(
         ArtCard(
             art = art,
             track = track,
-            corner = 18.dp,
+            corner = cardCorner,
             modifier = Modifier
-                .size(195.dp)
+                .size(cardSize, cardHeight)
                 .zIndex(if (absProgress <= 0.5f) 2f else 1f)
                 .graphicsLayer {
                     translationX = dragOffsetX.value
@@ -585,7 +598,10 @@ fun BerryAlbumArtCarousel(
                     alpha = centerAlpha
                 }
                 .pointerInput(Unit) { detectTapGestures(onLongPress = { controller.cycleVisMode() }) },
-            spectrum = if (controller.visMode != VisMode.DISABLED) controller.liveSpectrumAmplitudes else null
+            // Fade Controls draws the visualization on the cover; Full Screen draws it behind the whole player
+            spectrum = if (controller.visMode == VisMode.FADE_CONTROLS) controller.liveSpectrumAmplitudes else null,
+            visPresetId = controller.currentVisPreset.id,
+            visPhase = controller.visPhase
         )
     }
 }
@@ -1598,7 +1614,15 @@ fun PowerampBottomDock(
                 .fillMaxWidth()
                 .height(64.dp)
                 .background(PowerampBg)
-                .border(width = 0.8.dp, color = PowerampBorderGray),
+                // Hairline divider on the top edge only (a full outline boxed the bar in on every side)
+                .drawBehind {
+                    drawLine(
+                        color = PowerampBorderGray.copy(alpha = 0.35f),
+                        start = Offset(0f, 0f),
+                        end = Offset(size.width, 0f),
+                        strokeWidth = 0.6.dp.toPx()
+                    )
+                },
             contentAlignment = Alignment.Center
         ) {
             Row(
@@ -1968,3 +1992,151 @@ fun PowerampAlphabetBubble(
         }
     }
 }
+
+// ==========================================================================================
+// Spectrum visualization family: plain / narrow / wide, centered (mirrored on the horizontal
+// axis), reflected (mirrored on the vertical axis, bass in the middle), dots and quads.
+// ==========================================================================================
+
+private val SpecTop = Color(0xFFB8D6FF)
+private val SpecBottom = Color(0xFF6C87B0)
+private val QuadLit = Color(0xFF7D90E6)
+private val QuadPeak = Color(0xFFC9D3F5)
+private val QuadDeep = Color(0xFF23308F)
+
+/** Amplitude for column [i] of [count]; synthetic motion when there is no spectrum yet. */
+private fun specAmp(amps: List<Float>, i: Int, count: Int, phase: Float, playing: Boolean): Float {
+    if (amps.isEmpty()) {
+        if (!playing) return 0.03f
+        val a = sin(phase * 2f + i * 0.45f) * 0.5f + 0.5f
+        val b = sin(phase * 1.3f - i * 0.21f) * 0.5f + 0.5f
+        return (0.12f + 0.8f * a * b).coerceIn(0f, 1f)
+    }
+    val idx = (i.toFloat() / count * amps.size).toInt().coerceIn(0, amps.lastIndex)
+    return amps[idx].coerceIn(0f, 1f)
+}
+
+fun DrawScope.drawSpectrumFamily(presetId: String, amps: List<Float>, phase: Float, playing: Boolean) {
+    val w = size.width
+    val h = size.height
+    val minBar = 2.dp.toPx()
+    when (presetId) {
+        "spectrum-plain", "spectrum-narrow", "spectrum-wide" -> {
+            val count = when (presetId) { "spectrum-narrow" -> 56; "spectrum-wide" -> 16; else -> 32 }
+            val fill = when (presetId) { "spectrum-narrow" -> 0.42f; "spectrum-wide" -> 0.78f; else -> 0.62f }
+            val slot = w / count
+            val bw = slot * fill
+            val base = h * 0.92f
+            val maxH = h * 0.80f
+            for (i in 0 until count) {
+                val bh = (specAmp(amps, i, count, phase, playing) * maxH).coerceAtLeast(minBar)
+                val x = i * slot + (slot - bw) / 2f
+                drawRoundRect(
+                    brush = Brush.verticalGradient(listOf(SpecTop, SpecBottom), startY = base - maxH, endY = base),
+                    topLeft = Offset(x, base - bh),
+                    size = Size(bw, bh),
+                    cornerRadius = CornerRadius(bw / 2f, bw / 2f)
+                )
+            }
+        }
+
+        "spectrum-centered", "spectrum-centered-narrow", "spectrum-centered-wide" -> {
+            val count = when (presetId) { "spectrum-centered-narrow" -> 56; "spectrum-centered-wide" -> 14; else -> 30 }
+            val fill = when (presetId) { "spectrum-centered-narrow" -> 0.30f; "spectrum-centered-wide" -> 0.72f; else -> 0.38f }
+            val slot = w / count
+            val bw = (slot * fill).coerceAtLeast(1.5.dp.toPx())
+            val cy = h * 0.5f
+            val maxHalf = h * 0.46f
+            for (i in 0 until count) {
+                val half = (specAmp(amps, i, count, phase, playing) * maxHalf).coerceAtLeast(minBar / 2f)
+                val x = i * slot + (slot - bw) / 2f
+                drawRoundRect(
+                    brush = Brush.verticalGradient(
+                        listOf(SpecTop, SpecTop, SpecBottom.copy(alpha = 0.75f)),
+                        startY = cy - maxHalf, endY = cy + maxHalf
+                    ),
+                    topLeft = Offset(x, cy - half),
+                    size = Size(bw, half * 2f),
+                    cornerRadius = CornerRadius(bw / 2f, bw / 2f)
+                )
+            }
+        }
+
+        "spectrum-centered-reflected", "spectrum-reflected-wide" -> {
+            // Bass in the middle, mirrored to both sides; thin white lines around the horizontal axis
+            val wide = presetId == "spectrum-reflected-wide"
+            val perSide = if (wide) 18 else 24
+            val slot = (w / 2f) / perSide
+            val sw = if (wide) 2.6.dp.toPx() else 1.6.dp.toPx()
+            val cy = h * 0.5f
+            val maxHalf = h * 0.46f
+            for (i in 0 until perSide) {
+                val half = (specAmp(amps, i, perSide, phase, playing) * maxHalf).coerceAtLeast(minBar)
+                val brush = Brush.verticalGradient(
+                    listOf(Color.Transparent, Color.White, Color.White, SpecBottom.copy(alpha = 0.5f), Color.Transparent),
+                    startY = cy - half, endY = cy + half
+                )
+                for (side in listOf(-1f, 1f)) {
+                    val x = w / 2f + side * (i * slot + slot / 2f)
+                    drawLine(brush, Offset(x, cy - half), Offset(x, cy + half), strokeWidth = sw)
+                }
+            }
+        }
+
+        "spectrum-dots" -> {
+            val count = 24
+            val slot = w / count
+            val r = slot * 0.26f
+            val step = r * 2.6f
+            val base = h * 0.92f
+            val maxH = h * 0.82f
+            for (i in 0 until count) {
+                val bh = specAmp(amps, i, count, phase, playing) * maxH
+                val n = (bh / step).toInt().coerceAtLeast(1)
+                val cx = i * slot + slot / 2f
+                for (k in 0 until n) {
+                    val t = k.toFloat() / (maxH / step)
+                    drawCircle(
+                        color = lerpColor(SpecBottom, SpecTop, t.coerceIn(0f, 1f)),
+                        radius = r,
+                        center = Offset(cx, base - r - k * step)
+                    )
+                }
+            }
+        }
+
+        "spectrum-quads-narrow", "spectrum-quads-reflected" -> {
+            val reflected = presetId == "spectrum-quads-reflected"
+            val cols = if (reflected) 28 else 16
+            val slot = w / cols
+            val cell = slot * 0.86f
+            val gap = slot - cell
+            val rows = ((h * 0.86f) / slot).toInt().coerceAtLeast(4)
+            val base = h * 0.94f
+            for (c in 0 until cols) {
+                // Reflected: bass in the middle, mirrored outwards
+                val bin = if (reflected) kotlin.math.abs(c - (cols - 1) / 2f).toInt() else c
+                val binCount = if (reflected) cols / 2 else cols
+                val lit = (specAmp(amps, bin, binCount, phase, playing) * rows).toInt().coerceIn(1, rows)
+                val x = c * slot + gap / 2f
+                for (r in 0 until lit + 2) {
+                    if (r >= rows) break
+                    val y = base - (r + 1) * slot + gap / 2f
+                    val color = when {
+                        r < lit - 1 -> if (reflected) QuadDeep else QuadLit
+                        r == lit - 1 -> if (reflected) QuadDeep.copy(alpha = 0.85f) else QuadPeak
+                        else -> Color.White.copy(alpha = 0.06f) // faint trail above the column
+                    }
+                    drawRect(color = color, topLeft = Offset(x, y), size = Size(cell, cell))
+                }
+            }
+        }
+    }
+}
+
+private fun lerpColor(a: Color, b: Color, t: Float): Color = Color(
+    red = a.red + (b.red - a.red) * t,
+    green = a.green + (b.green - a.green) * t,
+    blue = a.blue + (b.blue - a.blue) * t,
+    alpha = a.alpha + (b.alpha - a.alpha) * t
+)

@@ -95,6 +95,10 @@ class MainActivity : ComponentActivity() {
                         controller.showInfoTagsSheet -> controller.showInfoTagsSheet = false
                         controller.showTrackActionDialog -> controller.showTrackActionDialog = false
                         controller.showSleepTimerDialog -> controller.showSleepTimerDialog = false
+                        controller.showVisPresetList -> controller.showVisPresetList = false
+                        controller.showVisModeMenu -> controller.showVisModeMenu = false
+                        controller.showRepeatMenu -> controller.showRepeatMenu = false
+                        controller.showShuffleMenu -> controller.showShuffleMenu = false
                         controller.showEqPresetSheet -> controller.showEqPresetSheet = false
                         controller.showReverbPresetSheet -> controller.showReverbPresetSheet = false
                         controller.showAddToPlaylistDialog -> controller.showAddToPlaylistDialog = false

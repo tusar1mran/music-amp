@@ -2693,6 +2693,68 @@ class PowerampController(private val context: Context) {
         showToast(visMode.label, "Long press for more options")
     }
 
+    // ----- Player screen: Visualization panel, faded controls, playback speed -----
+    // Long-press menu of the Visualization button, and the preset list opened from the preset bar
+    var showVisModeMenu by mutableStateOf(false)
+    var showVisPresetList by mutableStateOf(false)
+    // Long-press menus of the Repeat and Shuffle pills on the player
+    var showRepeatMenu by mutableStateOf(false)
+    var showShuffleMenu by mutableStateOf(false)
+
+    fun setRepeatModeTo(mode: RepeatMode) {
+        repeatMode = mode
+        preloadNext()
+        showToast(mode.label)
+    }
+
+    fun setShuffleModeTo(mode: ShuffleMode) {
+        shuffleMode = mode
+        shuffleNextId = -1L
+        preloadNext()
+        showToast(mode.label)
+    }
+    /** Settings page to open directly the next time Settings is shown (e.g. "Visualization"). */
+    var pendingSettingsSection by mutableStateOf<String?>(null)
+
+    fun setVisModeTo(mode: VisMode) {
+        if (mode == visMode) return
+        visMode = mode
+        showVisPresetBar = mode != VisMode.DISABLED
+        refreshVisualizer()
+        wakeVisControls()
+    }
+
+    fun selectVisPreset(index: Int) {
+        if (index !in visPresets.indices) return
+        currentVisPresetIndex = index
+        if (visMode == VisMode.DISABLED) setVisModeTo(VisMode.FADE_CONTROLS)
+    }
+
+    /** True for a few seconds after the user touches the player, so faded controls come back. */
+    var visControlsAwake by mutableStateOf(false)
+        private set
+    private var visWakeJob: Job? = null
+
+    fun wakeVisControls() {
+        visControlsAwake = true
+        visWakeJob?.cancel()
+        visWakeJob = scope.launch {
+            delay(4000)
+            visControlsAwake = false
+        }
+    }
+
+    /** Auto preset change in the Visualization panel: Cycle walks the list, Shuffle picks at random. */
+    fun autoAdvanceVisPreset() {
+        when (visPresetCycleMode) {
+            "Cycle" -> currentVisPresetIndex = (currentVisPresetIndex + 1) % visPresets.size
+            "Shuffle" -> if (visPresets.size > 1) {
+                currentVisPresetIndex = (visPresets.indices - currentVisPresetIndex).random()
+            }
+            else -> return
+        }
+        if (visShowPresetToast) showToast("Preset: ${currentVisPreset.name}")
+    }
     fun nextVisPreset() {
         currentVisPresetIndex = (currentVisPresetIndex + 1) % visPresets.size
         if (visShowPresetToast) showToast("Preset: ${currentVisPreset.name}")
@@ -2704,10 +2766,11 @@ class PowerampController(private val context: Context) {
     }
 
     fun cycleVisPresetMode() {
-        val modes = listOf("Locked", "Shuffle", "Cycle")
+        // Same order as the preset bar icon: Cycle -> Shuffle -> Lock
+        val modes = listOf("Cycle", "Shuffle", "Locked")
         val nextIdx = (modes.indexOf(visPresetCycleMode) + 1) % modes.size
         visPresetCycleMode = modes[nextIdx]
-        showToast("Visualization Preset Mode: $visPresetCycleMode")
+        showToast(if (visPresetCycleMode == "Locked") "Lock" else visPresetCycleMode, "Long press for more options")
     }
 
     fun toggleLikeCurrentTrack() {

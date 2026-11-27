@@ -129,7 +129,7 @@ enum class ShuffleMode(val label: String) {
 
 enum class VisMode(val label: String) {
     DISABLED("Visualization - Disabled"),
-    FADE_CONTROLS("Visualization - Fade Controls"),
+    FADE_CONTROLS("Visualization - Fade"),
     FULL_SCREEN("Visualization - Full Screen")
 }
 
@@ -140,11 +140,23 @@ data class VisPreset(
 )
 
 val BUILT_IN_VIS_PRESETS = listOf(
-    VisPreset("spectrum_centered", "spectrum-centered", "Built-in"),
-    VisPreset("milkdrop_neon_wave", "milkdrop-neon-horizon", "Built-in"),
-    VisPreset("bars_mirrored_eq", "bars-symmetrical-hd", "Built-in"),
-    VisPreset("plasma_radial_pulse", "radial-bass-reactor", "Built-in"),
-    VisPreset("oscilloscope_ribbon", "stereo-oscilloscope", "Built-in")
+    // Spectrum family (drawn by drawVisualization)
+    VisPreset("spectrum-centered", "spectrum-centered", "Built-in"),
+    VisPreset("spectrum-centered-narrow", "spectrum-centered-narrow", "Built-in"),
+    VisPreset("spectrum-centered-reflected", "spectrum-centered-reflected", "Built-in"),
+    VisPreset("spectrum-centered-wide", "spectrum-centered-wide", "Built-in"),
+    VisPreset("spectrum-dots", "spectrum-dots", "Built-in"),
+    VisPreset("spectrum-narrow", "spectrum-narrow", "Built-in"),
+    VisPreset("spectrum-plain", "spectrum-plain", "Built-in"),
+    VisPreset("spectrum-quads-narrow", "spectrum-quads-narrow", "Built-in"),
+    VisPreset("spectrum-quads-reflected", "spectrum-quads-reflected", "Built-in"),
+    VisPreset("spectrum-reflected-wide", "spectrum-reflected-wide", "Built-in"),
+    VisPreset("spectrum-wide", "spectrum-wide", "Built-in"),
+    // Extra MusicAmp styles
+    VisPreset("milkdrop_neon_wave", "neon-horizon", "MusicAmp"),
+    VisPreset("bars_mirrored_eq", "bars-symmetrical-hd", "MusicAmp"),
+    VisPreset("plasma_radial_pulse", "radial-bass-reactor", "MusicAmp"),
+    VisPreset("oscilloscope_ribbon", "stereo-oscilloscope", "MusicAmp")
 )
 
 enum class MainNavTab {

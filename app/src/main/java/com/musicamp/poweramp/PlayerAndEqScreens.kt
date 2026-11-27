@@ -82,6 +82,10 @@ import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.ThumbDown
 import androidx.compose.material.icons.outlined.ThumbUp
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.filled.KeyboardDoubleArrowLeft
+import androidx.compose.material.icons.filled.KeyboardDoubleArrowRight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -104,7 +108,13 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * 100% Pixel-Perfect Poweramp Main Player Screen (`01_current.png`).
+ * Main player, laid out like Poweramp's: edge-to-edge cover, left-aligned title / artist, like row,
+ * pill buttons (Visualization, Sleep timer | Repeat, Shuffle), transport over a scrolling waveform
+ * seekbar, times, format pill and the dock.
+ *
+ * Visualization: Fade draws the preset over the cover and dims the controls; Full Screen hides the
+ * whole player behind the preset while music plays. Any touch brings the controls (and the preset
+ * bar) back for a few seconds; that first touch only wakes them.
  */
 @Composable
 private fun PowerampPlayerScreenContent(
@@ -118,257 +128,208 @@ private fun PowerampPlayerScreenContent(
     // Internet streams have no duration: show LIVE and disable seeking
     val isLive = controller.durationMs <= 0L && controller.currentStream != null
     val durationStr = if (isLive) "LIVE" else "%d:%02d".format(durationSec / 60, durationSec % 60)
-    // Smooth seekbar: progress glides every frame; off, it jumps once per second
-    val seekProgress = when {
-        controller.durationMs <= 0L -> 0f
-        controller.smoothSeekbarAnimation || controller.isScrubbing -> controller.progressFraction
-        else -> ((controller.currentPositionMs / 1000L) * 1000L).toFloat() / controller.durationMs.toFloat()
-    }.coerceIn(0f, 1f)
-    val coroutineScope = rememberCoroutineScope()
+    val seekProgress = if (controller.durationMs <= 0L) 0f else controller.progressFraction.coerceIn(0f, 1f)
 
-    // In Poweramp, when Visualization is set to Fade Controls or Full Screen while playing,
-    // the UI controls smoothly fade opacity (`02_playing_t1.png`, `04_playing_vis1.png`)
+    val visOn = controller.visMode != VisMode.DISABLED
+    val playing = controller.isPlaying
+    val awake = controller.visControlsAwake
+    // Controls are "asleep" while a visualization plays and nobody touched the screen lately
+    val menuOpen = controller.showVisModeMenu || controller.showVisPresetList || controller.showRepeatMenu || controller.showShuffleMenu
+    val asleep = visOn && playing && !awake && !menuOpen
     val controlsAlpha by animateFloatAsState(
         targetValue = when {
-            controller.visMode == VisMode.FULL_SCREEN && controller.isPlaying -> 0.18f
-            controller.visMode == VisMode.FADE_CONTROLS && controller.isPlaying -> controller.visFadedControlsOpacity
-            else -> 1f
+            !asleep -> 1f
+            controller.visMode == VisMode.FULL_SCREEN -> 0f
+            else -> controller.visFadedControlsOpacity
         },
         animationSpec = tween(durationMillis = 380, easing = FastOutSlowInEasing),
         label = "controlsFadeAlpha"
     )
+    val fullScreenVis = controller.visMode == VisMode.FULL_SCREEN && playing
+    VisPresetAutoChange(controller)
 
-    // Settings > Background: the opaque header is see-through over a blurred / glow background
-    val plainBackground = controller.backgroundType == PLAYER_BG_BLACK
     Box(modifier = modifier.fillMaxSize()) {
         PlayerBackground(controller = controller, track = track, modifier = Modifier.matchParentSize())
+        if (fullScreenVis) {
+            FullScreenVisualization(controller = controller, modifier = Modifier.matchParentSize())
+        }
+
         Column(
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                // Full Screen fades everything; Fade keeps the cover (with the visualization) bright
+                .alpha(if (controller.visMode == VisMode.FULL_SCREEN) controlsAlpha else 1f)
+                // Watch touches without consuming them: keeps controls awake while a visualization runs
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        if (controller.visMode != VisMode.DISABLED) controller.wakeVisControls()
+                    }
+                }
         ) {
-            // 1. TOP CURVED BERRY HEADER & ALBUM ART CAROUSEL
-            Box(
+            // 1. COVER: edge to edge, swipe sideways to change track, long-press to switch visualization
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1.30f)
+                    .weight(1f)
             ) {
-                // Berry Gradient Backdrop with curved bottom matching reference design
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight(0.60f)
-                        .clip(RoundedCornerShape(bottomStart = 38.dp, bottomEnd = 38.dp))
-                        .background(ThemeBerryHeaderGradient, alpha = if (plainBackground) 1f else 0.3f)
-                        .statusBarsPadding()
-                ) {
-                    // Header Top Navigation Row: Back < | "Now Playing" | Tune/EQ
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(
-                            onClick = {
-                                controller.currentMainTab = MainNavTab.LIBRARY
-                            },
-                            modifier = Modifier.size(40.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.ArrowBack,
-                                contentDescription = "Back",
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-
-                        Text(
-                            text = "Now Playing",
-                            color = Color.White,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold.appWeight
-                        )
-
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(
-                                onClick = {
-                                    controller.currentMainTab = MainNavTab.EQUALIZER
-                                },
-                                modifier = Modifier.size(38.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Tune,
-                                    contentDescription = "Equalizer",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            IconButton(
-                                onClick = {
-                                    controller.showSettingsScreen = true
-                                },
-                                modifier = Modifier.size(38.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Settings,
-                                    contentDescription = "Settings",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Space between the header row and the art carousel (tall screens): album and
-                // list position, like the info line Poweramp shows above the cover
-                Column(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .statusBarsPadding()
-                ) {
-                    Spacer(modifier = Modifier.height(52.dp)) // header row: 40dp button + 2 × 6dp padding
-                    BoxWithConstraints(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                            .padding(horizontal = 32.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val album = track?.album?.takeIf { it.isNotBlank() }
-                        val position = remember(track?.id, controller.allTracks.size, controller.queueTracks.size) {
-                            controller.playbackPosition()
-                        }
-                        val positionText = position?.let { (i, n) -> "$i / $n" }
-                        val shown = controller.currentStream == null && (album != null || positionText != null)
-                        if (shown && maxHeight >= 22.dp) {
-                            if (maxHeight >= 44.dp) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    if (album != null) {
-                                        Text(
-                                            text = album,
-                                            color = Color.White.copy(alpha = 0.85f),
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.SemiBold.appWeight,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    if (positionText != null) {
-                                        Text(
-                                            text = positionText,
-                                            color = Color.White.copy(alpha = 0.55f),
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Medium.appWeight,
-                                            maxLines = 1
-                                        )
-                                    }
-                                }
-                            } else {
-                                Text(
-                                    text = listOfNotNull(album, positionText).joinToString("  ·  "),
-                                    color = Color.White.copy(alpha = 0.75f),
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold.appWeight,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(219.dp)) // carousel: 215dp + 4dp bottom padding
-                }
-
-                // ALBUM ART CAROUSEL (Center card + left/right peek cards)
                 BerryAlbumArtCarousel(
                     controller = controller,
                     track = track,
+                    cardSize = maxWidth,
+                    cardSpan = maxWidth,
+                    cardHeight = maxHeight,
+                    cardCorner = 0.dp,
+                    verticalPadding = 0.dp,
+                    modifier = Modifier.fillMaxSize()
+                )
+                // Soft fade into the page under the cover so the title reads well
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
                         .align(Alignment.BottomCenter)
-                        .padding(top = 40.dp, bottom = 4.dp)
+                        .fillMaxWidth()
+                        .height(72.dp)
+                        .background(Brush.verticalGradient(listOf(Color.Transparent, PowerampBg.copy(alpha = 0.85f))))
                 )
             }
 
-            // 2. METADATA ROW: Share Icon | Title & Artist | 3-Dot Menu
-            Row(
+            Column(modifier = Modifier.fillMaxWidth().alpha(if (controller.visMode == VisMode.FADE_CONTROLS) controlsAlpha else 1f)) {
+            // 2. TITLE / ARTIST (left aligned)
+            AnimatedContent(
+                targetState = track,
+                transitionSpec = {
+                    val dir = if (controller.trackTransitionDirection >= 0) 1 else -1
+                    (slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { dir * it / 4 } + fadeIn(tween(200)))
+                        .togetherWith(slideOutHorizontally(tween(200)) { -dir * it / 4 } + fadeOut(tween(150)))
+                },
+                label = "trackMetadataTransition",
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 22.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = {
-                        track?.let { controller.shareTrack(it) }
-                    },
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Share,
-                        contentDescription = "Share",
-                        tint = PowerampTextSecondary,
-                        modifier = Modifier.size(22.dp)
+                    .padding(horizontal = 18.dp)
+            ) { t ->
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = t?.title ?: "No music",
+                        color = PowerampTextPrimary,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold.appWeight,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.visChip(visOn)
                     )
-                }
-
-                AnimatedContent(
-                    targetState = track,
-                    transitionSpec = {
-                        val dir = if (controller.trackTransitionDirection >= 0) 1 else -1
-                        (slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { dir * it / 3 } +
-                            fadeIn(tween(200)))
-                            .togetherWith(
-                                slideOutHorizontally(tween(200, easing = FastOutSlowInEasing)) { -dir * it / 3 } +
-                                    fadeOut(tween(150))
-                            )
-                    },
-                    label = "trackMetadataTransition",
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 12.dp)
-                ) { animatedTrack ->
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = animatedTrack?.title ?: "No music",
-                            color = PowerampTextPrimary,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold.appWeight,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = animatedTrack?.artist ?: "No track",
-                            color = PowerampTextSecondary,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium.appWeight,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-
-                IconButton(
-                    onClick = {
-                        controller.actionTargetTrack = track
-                        controller.showTrackActionDialog = true
-                    },
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.MoreVert,
-                        contentDescription = "Options",
-                        tint = PowerampTextSecondary,
-                        modifier = Modifier.size(22.dp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = t?.artist ?: "",
+                        color = PowerampTextPrimary,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold.appWeight,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.visChip(visOn)
                     )
                 }
             }
 
-            // Live Seeking Indicator Pill when holding Next / Previous button
+            // 3. LIKE / DISLIKE  ......  A-B  menu
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val rating = track?.rating ?: 0
+                IconButton(onClick = { controller.toggleLikeCurrentTrack() }, enabled = track != null) {
+                    Icon(
+                        imageVector = if (rating == 1) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp,
+                        contentDescription = "Like",
+                        tint = PowerampTextPrimary,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                IconButton(onClick = { controller.toggleUnlikeCurrentTrack() }, enabled = track != null) {
+                    Icon(
+                        imageVector = if (rating == -1) Icons.Filled.ThumbDown else Icons.Outlined.ThumbDown,
+                        contentDescription = "Unlike",
+                        tint = PowerampTextPrimary,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                // A-B repeat chip, shown only while set (long-press the elapsed time to set points)
+                if (controller.abStartMs != null) {
+                    Text(
+                        text = if (controller.abEndMs != null) "A-B" else "A-",
+                        color = PowerampTextPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.ExtraBold.appWeight,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(PlayerPillOn)
+                            .clickable { controller.cycleAbRepeat() }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+                IconButton(onClick = {
+                    controller.actionTargetTrack = track
+                    controller.showTrackActionDialog = true
+                }) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "Menu", tint = PowerampTextPrimary, modifier = Modifier.size(26.dp))
+                }
+            }
+
+            // 4. PILLS: Visualization, Sleep timer  ......  Repeat, Shuffle
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PlayerPillButton(
+                    contentDescription = "Visualization",
+                    active = visOn,
+                    onClick = { controller.cycleVisMode() },
+                    onLongClick = { controller.showVisModeMenu = true }
+                ) { tint ->
+                    VisModeIcon(controller.visMode, tint, Modifier.size(width = 26.dp, height = 26.dp))
+                }
+                PlayerPillButton(
+                    contentDescription = "Sleep Timer",
+                    active = controller.sleepTimerRemainingSeconds > 0,
+                    onClick = { controller.showSleepTimerDialog = true },
+                    onLongClick = { if (controller.sleepTimerRemainingSeconds > 0) controller.setSleepTimer(0) }
+                ) { tint ->
+                    Icon(Icons.Outlined.Schedule, contentDescription = null, tint = tint, modifier = Modifier.size(30.dp))
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                PlayerPillButton(
+                    contentDescription = "Repeat",
+                    active = controller.repeatMode != RepeatMode.OFF,
+                    onClick = { controller.cycleRepeatMode() },
+                    onLongClick = { controller.showRepeatMenu = true }
+                ) { tint ->
+                    Icon(
+                        imageVector = when (controller.repeatMode) {
+                            RepeatMode.REPEAT_SONG, RepeatMode.SINGLE_SONG -> Icons.Filled.RepeatOne
+                            else -> Icons.Filled.Repeat
+                        },
+                        contentDescription = null,
+                        tint = tint,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+                PlayerPillButton(
+                    contentDescription = "Shuffle",
+                    active = controller.shuffleMode != ShuffleMode.OFF,
+                    onClick = { controller.cycleShuffleMode() },
+                    onLongClick = { controller.showShuffleMenu = true }
+                ) { tint ->
+                    Icon(Icons.Filled.Shuffle, contentDescription = null, tint = tint, modifier = Modifier.size(28.dp))
+                }
+            }
+
+            // Live seeking indicator while holding Previous / Next
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -377,142 +338,83 @@ private fun PowerampPlayerScreenContent(
             ) {
                 androidx.compose.animation.AnimatedVisibility(
                     visible = controller.isSeekingFwd || controller.isSeekingRwd,
-                    enter = scaleIn(initialScale = 0.85f, animationSpec = tween(140)) + fadeIn(tween(120)),
-                    exit = scaleOut(targetScale = 0.85f, animationSpec = tween(140)) + fadeOut(tween(120))
+                    enter = fadeIn(tween(120)),
+                    exit = fadeOut(tween(120))
                 ) {
-                    val deltaSec = (controller.seekingAccumulatedDeltaMs / 1000L)
-                    val label = if (controller.isSeekingFwd) "⏩ +${kotlin.math.abs(deltaSec)}s" else "⏪ -${kotlin.math.abs(deltaSec)}s"
-                    Box(
+                    val deltaSec = kotlin.math.abs(controller.seekingAccumulatedDeltaMs / 1000L)
+                    Text(
+                        text = if (controller.isSeekingFwd) "+${deltaSec}s" else "-${deltaSec}s",
+                        color = PowerampTextPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold.appWeight,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(ThemeBerryPrimary.copy(alpha = 0.22f))
-                            .border(1.dp, ThemeBerryPrimary.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
-                            .padding(horizontal = 12.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = label,
-                            color = ThemeBerryPrimary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.ExtraBold.appWeight
-                        )
-                    }
-                }
-            }
-
-            // 3. TIME & SYMMETRICAL SOUNDWAVE WAVEFORM SECTION
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = elapsedStr,
-                    color = if (controller.isScrubbing || controller.isSeekingFwd || controller.isSeekingRwd) ThemeBerryPrimary else Color(0xFF4A4E57),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold.appWeight
-                )
-
-                // Symmetrical Waveform Bar in center (zero-lag scrubbing at native refresh rate)
-                val abStartFrac = controller.abStartMs?.let {
-                    if (controller.durationMs > 0L) (it.toFloat() / controller.durationMs).coerceIn(0f, 1f) else null
-                }
-                val abEndFrac = controller.abEndMs?.let {
-                    if (controller.durationMs > 0L) (it.toFloat() / controller.durationMs).coerceIn(0f, 1f) else null
-                }
-                BerrySymmetricalWaveform(
-                    bars = track?.waveformBars ?: emptyList(),
-                    progress = seekProgress,
-                    onSeek = { if (controller.durationMs > 0L) controller.seekToFraction(it) },
-                    onScrubStart = { if (controller.durationMs > 0L) controller.isScrubbing = true },
-                    onScrubPreview = { if (controller.durationMs > 0L) controller.previewScrubFraction(it) },
-                    onScrubEnd = { frac ->
-                        controller.isScrubbing = false
-                        if (controller.durationMs > 0L) controller.seekToFraction(frac)
-                    },
-                    abStartFraction = abStartFrac,
-                    abEndFraction = abEndFrac,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp)
-                        .padding(horizontal = 10.dp)
-                )
-
-                Text(
-                    text = durationStr,
-                    color = Color(0xFF4A4E57),
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold.appWeight
-                )
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // 4. TRANSPORT CONTROLS: Shuffle | Prev Track (hold=rewind) | Glowing Play/Pause | Next Track (hold=fast-forward) | Repeat
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Shuffle Button
-                val isShuffle = controller.shuffleMode != ShuffleMode.OFF
-                IconButton(
-                    onClick = { controller.cycleShuffleMode() },
-                    modifier = Modifier.size(44.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Shuffle,
-                        contentDescription = "Shuffle",
-                        tint = if (isShuffle) ThemeBerryPrimary else PowerampIconStrong,
-                        modifier = Modifier.size(24.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(PlayerPillOn)
+                            .padding(horizontal = 10.dp, vertical = 2.dp)
                     )
                 }
+            }
 
-                // Previous Track (tap = previous / restart, press & hold = smooth rewind)
-                HoldToSeekTransportButton(
-                    icon = Icons.Filled.SkipPrevious,
-                    holdIcon = Icons.Filled.FastRewind,
-                    contentDescription = "Previous Track / Hold to Rewind",
-                    isSeeking = controller.isSeekingRwd,
-                    onTap = { controller.previousTrackOrRestart() },
-                    onSeekStart = {
-                        controller.isSeekingRwd = true
-                        controller.seekingAccumulatedDeltaMs = 0L
-                    },
-                    onSeekTick = { stepMs ->
-                        controller.seekingAccumulatedDeltaMs -= stepMs
-                        controller.seekRelative(-stepMs)
-                    },
-                    onSeekEnd = {
-                        controller.isSeekingRwd = false
-                        controller.seekingAccumulatedDeltaMs = 0L
-                    }
+            // 5. TRANSPORT over the scrolling waveform seekbar
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(120.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                ScrollingWaveSeek(
+                    controller = controller,
+                    bars = track?.waveformBars ?: emptyList(),
+                    progress = seekProgress,
+                    modifier = Modifier.fillMaxSize()
                 )
-
-                // Main Play/Pause Button with Berry Halo / Glow Ring
-                Box(
-                    modifier = Modifier
-                        .size(76.dp)
-                        .clip(CircleShape)
-                        .background(ThemeBerryPrimary.copy(alpha = 0.16f)) // Outer glow ring
-                        .clickable { controller.togglePlayPause() },
-                    contentAlignment = Alignment.Center
+                // Buttons sit on discs of the page colour so the waveform passes behind them
+                val disc = PowerampBg
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    IconButton(onClick = { controller.prevCategory() }, modifier = Modifier.size(52.dp)) {
+                        Icon(
+                            Icons.Filled.KeyboardDoubleArrowLeft,
+                            contentDescription = "Prev. category",
+                            tint = PowerampTextPrimary.copy(alpha = 0.35f),
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+                    HoldToSeekTransportButton(
+                        icon = Icons.Filled.FastRewind,
+                        holdIcon = Icons.Filled.FastRewind,
+                        contentDescription = "Previous track",
+                        isSeeking = controller.isSeekingRwd,
+                        onTap = { controller.previousTrackOrRestart() },
+                        onSeekStart = {
+                            controller.isSeekingRwd = true
+                            controller.seekingAccumulatedDeltaMs = 0L
+                        },
+                        onSeekTick = { stepMs ->
+                            controller.seekingAccumulatedDeltaMs -= stepMs
+                            controller.seekRelative(-stepMs)
+                        },
+                        onSeekEnd = {
+                            controller.isSeekingRwd = false
+                            controller.seekingAccumulatedDeltaMs = 0L
+                        },
+                        buttonSize = 72.dp,
+                        iconSize = 44.dp,
+                        background = disc
+                    )
                     Box(
                         modifier = Modifier
-                            .size(60.dp)
+                            .size(96.dp)
                             .clip(CircleShape)
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(ThemeBerryLight, ThemeBerryDark)
-                                )
-                            ),
+                            .background(disc)
+                            .clickable { controller.togglePlayPause() },
                         contentAlignment = Alignment.Center
                     ) {
                         AnimatedContent(
-                            targetState = controller.isPlaying,
+                            targetState = playing,
                             transitionSpec = {
                                 if (controller.playPauseMorphAnimation) {
                                     (scaleIn(initialScale = 0.72f, animationSpec = tween(160)) + fadeIn(tween(140)))
@@ -522,171 +424,138 @@ private fun PowerampPlayerScreenContent(
                                 }
                             },
                             label = "playPauseMorph"
-                        ) { playing ->
+                        ) { isPlayingNow ->
                             Icon(
-                                imageVector = if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                                contentDescription = "Play / Pause",
-                                tint = PowerampOnAccent,
-                                modifier = Modifier.size(34.dp)
+                                imageVector = if (isPlayingNow) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                contentDescription = if (isPlayingNow) "Pause" else "Play",
+                                tint = PowerampTextPrimary,
+                                modifier = Modifier.size(76.dp)
                             )
                         }
                     }
-                }
-
-                // Next Track (tap = next track, press & hold = smooth fast-forward)
-                HoldToSeekTransportButton(
-                    icon = Icons.Filled.SkipNext,
-                    holdIcon = Icons.Filled.FastForward,
-                    contentDescription = "Next Track / Hold to Fast Forward",
-                    isSeeking = controller.isSeekingFwd,
-                    onTap = { controller.nextTrack() },
-                    onSeekStart = {
-                        controller.isSeekingFwd = true
-                        controller.seekingAccumulatedDeltaMs = 0L
-                    },
-                    onSeekTick = { stepMs ->
-                        controller.seekingAccumulatedDeltaMs += stepMs
-                        controller.seekRelative(stepMs)
-                    },
-                    onSeekEnd = {
-                        controller.isSeekingFwd = false
-                        controller.seekingAccumulatedDeltaMs = 0L
-                    }
-                )
-
-                // Repeat & A-B Repeat Buttons
-                val isRepeat = controller.repeatMode != RepeatMode.OFF
-                val abActive = controller.abStartMs != null
-                val abLabel = when {
-                    controller.abStartMs != null && controller.abEndMs != null -> "A-B"
-                    controller.abStartMs != null -> "A"
-                    else -> "A-B"
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .height(26.dp)
-                            .clip(RoundedCornerShape(13.dp))
-                            .background(
-                                when {
-                                    controller.abEndMs != null -> ThemeBerryPrimary
-                                    controller.abStartMs != null -> ThemeBerryPrimary.copy(alpha = 0.25f)
-                                    else -> Color.Transparent
-                                }
-                            )
-                            .border(
-                                1.dp,
-                                if (abActive) ThemeBerryPrimary else PowerampIconStrong.copy(alpha = 0.4f),
-                                RoundedCornerShape(13.dp)
-                            )
-                            .clickable { controller.cycleAbRepeat() }
-                            .padding(horizontal = 7.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = abLabel,
-                            color = if (controller.abEndMs != null) PowerampOnAccent else if (abActive) ThemeBerryPrimary else PowerampIconStrong,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.ExtraBold.appWeight
-                        )
-                    }
-                    IconButton(
-                        onClick = { controller.cycleRepeatMode() },
-                        modifier = Modifier.size(40.dp)
-                    ) {
+                    HoldToSeekTransportButton(
+                        icon = Icons.Filled.FastForward,
+                        holdIcon = Icons.Filled.FastForward,
+                        contentDescription = "Next track",
+                        isSeeking = controller.isSeekingFwd,
+                        onTap = { controller.nextTrack() },
+                        onSeekStart = {
+                            controller.isSeekingFwd = true
+                            controller.seekingAccumulatedDeltaMs = 0L
+                        },
+                        onSeekTick = { stepMs ->
+                            controller.seekingAccumulatedDeltaMs += stepMs
+                            controller.seekRelative(stepMs)
+                        },
+                        onSeekEnd = {
+                            controller.isSeekingFwd = false
+                            controller.seekingAccumulatedDeltaMs = 0L
+                        },
+                        buttonSize = 72.dp,
+                        iconSize = 44.dp,
+                        background = disc
+                    )
+                    IconButton(onClick = { controller.nextCategory() }, modifier = Modifier.size(52.dp)) {
                         Icon(
-                            imageVector = if (controller.repeatMode == RepeatMode.REPEAT_SONG || controller.repeatMode == RepeatMode.SINGLE_SONG) {
-                                Icons.Filled.RepeatOne
-                            } else {
-                                Icons.Filled.Repeat
-                            },
-                            contentDescription = "Repeat",
-                            tint = if (isRepeat) ThemeBerryPrimary else PowerampIconStrong,
-                            modifier = Modifier.size(24.dp)
+                            Icons.Filled.KeyboardDoubleArrowRight,
+                            contentDescription = "Next category",
+                            tint = PowerampTextPrimary.copy(alpha = 0.35f),
+                            modifier = Modifier.size(30.dp)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // 5. Rating Pill + Audio Meta Info Pill (each can be hidden in Settings > Look and Feel)
-            val showRating = controller.showRatingPill && track != null && controller.currentStream == null
-            val showMeta = controller.showMetaLine && track != null
+            // 6. TIMES (long-press the elapsed time for A-B repeat)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(26.dp)
-                    .padding(vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                    .padding(horizontal = 22.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (showRating && track != null) {
-                    Row(
+                Text(
+                    text = elapsedStr,
+                    color = PowerampTextPrimary,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold.appWeight,
+                    modifier = Modifier
+                        .visChip(visOn)
+                        .pointerInput(Unit) { detectTapGestures(onLongPress = { controller.cycleAbRepeat() }) }
+                )
+                Text(
+                    text = durationStr,
+                    color = PowerampTextPrimary,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold.appWeight,
+                    modifier = Modifier.visChip(visOn)
+                )
+            }
+
+            // 7. FORMAT PILL (tap = Info / Tags)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(40.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (controller.showMetaLine && track != null) {
+                    Text(
+                        text = if (isLive) "LIVE STREAM" else track.bottomBadgeInfo,
+                        color = PowerampTextPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold.appWeight,
                         modifier = Modifier
-                            .fillMaxHeight()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(PowerampPillBg),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .clickable { controller.toggleUnlikeCurrentTrack() }
-                                .padding(horizontal = 10.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (track.rating == -1) Icons.Filled.ThumbDown else Icons.Outlined.ThumbDown,
-                                contentDescription = "Dislike",
-                                tint = if (track.rating == -1) ThemeBerryPrimary else PowerampTextSecondary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .clickable { controller.toggleLikeCurrentTrack() }
-                                .padding(horizontal = 10.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (track.rating == 1) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp,
-                                contentDescription = "Like",
-                                tint = if (track.rating == 1) ThemeBerryPrimary else PowerampTextSecondary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
-                    }
-                }
-                if (showMeta) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(PowerampPillBg)
+                            .clip(RoundedCornerShape(50))
+                            .background(PlayerPillIdle)
                             .clickable {
                                 controller.actionTargetTrack = track
                                 controller.showInfoTagsSheet = true
                             }
-                            .padding(horizontal = 12.dp, vertical = 3.dp)
-                    ) {
-                        Text(
-                            text = if (isLive) "LIVE STREAM" else track?.bottomBadgeInfo ?: "",
-                            color = PowerampTextSecondary,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold.appWeight,
-                            letterSpacing = 0.4.sp
-                        )
-                    }
+                            .padding(horizontal = 14.dp, vertical = 5.dp)
+                    )
                 }
             }
 
-            // 6. Bottom Navigation Bar (4 buttons without duplicate mini-player)
+            // 8. Dock
             PowerampBottomDock(
                 controller = controller,
                 showMiniPlayer = false
             )
+            }
         }
+
+        // Preset bar at the top while a visualization runs and the controls are showing
+        androidx.compose.animation.AnimatedVisibility(
+            visible = visOn && !asleep,
+            enter = fadeIn(tween(200)) + slideInVertically(tween(220)) { -it / 2 },
+            exit = fadeOut(tween(200)) + slideOutVertically(tween(200)) { -it / 2 },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(horizontal = 8.dp, vertical = 8.dp)
+        ) {
+            VisPresetBar(controller = controller)
+        }
+
+        // While the controls sleep, the first touch only wakes them (no accidental button presses)
+        if (asleep) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = { controller.wakeVisControls() },
+                            onLongPress = { controller.wakeVisControls() }
+                        )
+                    }
+            )
+        }
+
+        if (controller.showVisPresetList) VisPresetListDropdown(controller)
+        if (controller.showVisModeMenu) VisModeMenu(controller)
+        if (controller.showRepeatMenu) RepeatModeMenu(controller)
+        if (controller.showShuffleMenu) ShuffleModeMenu(controller)
     }
 }
 
@@ -704,7 +573,10 @@ private fun HoldToSeekTransportButton(
     onTap: () -> Unit,
     onSeekStart: () -> Unit,
     onSeekTick: (stepMs: Long) -> Unit,
-    onSeekEnd: () -> Unit
+    onSeekEnd: () -> Unit,
+    buttonSize: Dp = 54.dp,
+    iconSize: Dp = 34.dp,
+    background: Color = Color.Transparent
 ) {
     val currentOnTap by rememberUpdatedState(onTap)
     val currentOnSeekStart by rememberUpdatedState(onSeekStart)
@@ -726,9 +598,9 @@ private fun HoldToSeekTransportButton(
 
     Box(
         modifier = Modifier
-            .size(54.dp)
+            .size(buttonSize)
             .clip(CircleShape)
-            .background(if (isSeeking) ThemeBerryPrimary.copy(alpha = 0.16f) else Color.Transparent)
+            .background(if (isSeeking) PowerampTextPrimary.copy(alpha = 0.16f) else background)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -779,8 +651,8 @@ private fun HoldToSeekTransportButton(
         Icon(
             imageVector = if (isSeeking) holdIcon else icon,
             contentDescription = contentDescription,
-            tint = if (isSeeking) ThemeBerryPrimary else PowerampIconStrong,
-            modifier = Modifier.size(34.dp)
+            tint = PowerampTextPrimary,
+            modifier = Modifier.size(iconSize)
         )
     }
 }

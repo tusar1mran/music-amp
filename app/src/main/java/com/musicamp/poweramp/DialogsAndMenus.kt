@@ -9,6 +9,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -1524,7 +1530,10 @@ private fun PowerampPlaylistDialogContent(controller: PowerampController) {
  */
 @Composable
 private fun PowerampSettingsOverlayContent(controller: PowerampController) {
-    var activeSubSetting by remember { mutableStateOf<String?>(null) }
+    // Opens straight on a page when asked to (e.g. Visualization menu > Settings)
+    var activeSubSetting by remember {
+        mutableStateOf<String?>(controller.pendingSettingsSection.also { controller.pendingSettingsSection = null })
+    }
 
     Column(
         modifier = Modifier
@@ -2812,56 +2821,116 @@ fun PowerampToastOverlay(title: String, subtitle: String?, modifier: Modifier = 
     AppTextStyleScope { PowerampToastOverlayContent(title, subtitle, modifier) }
 
 /**
- * Volume popup shown at the top while the volume keys drive the app's own (DVC) volume,
- * like Poweramp's volume panel: speaker icon, level bar and percentage.
+ * Volume panel shown at the top while the volume keys drive the app's own (DVC) volume.
+ * A dark glass card with the level as a large number, the gain in dB and a glowing bar
+ * whose fill glides to each new step.
  */
 @Composable
 private fun PowerampVolumeOverlayContent(percent: Int, modifier: Modifier = Modifier) {
     val level = percent.coerceIn(0, 100)
-    Row(
+    val fill by animateFloatAsState(
+        targetValue = level / 100f,
+        animationSpec = tween(durationMillis = 160, easing = FastOutSlowInEasing),
+        label = "volumeFill"
+    )
+    // DVC gain is (level/100)^2.5, so in dB that is 50·log10(level/100)
+    val dbText = if (level == 0) "Muted" else "%.1f dB".format(50f * kotlin.math.log10(level / 100f))
+    Column(
         modifier = modifier
-            .padding(horizontal = 40.dp)
+            .padding(horizontal = 28.dp)
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
-            .background(Color(0xEE2B2C30))
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .clip(RoundedCornerShape(22.dp))
+            .background(
+                Brush.verticalGradient(listOf(Color(0xFF2A2B31), Color(0xFF1B1C20)))
+            )
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(22.dp))
+            .padding(start = 16.dp, end = 18.dp, top = 12.dp, bottom = 14.dp)
     ) {
-        Icon(
-            imageVector = when {
-                level == 0 -> Icons.Filled.VolumeOff
-                level < 50 -> Icons.Filled.VolumeDown
-                else -> Icons.Filled.VolumeUp
-            },
-            contentDescription = "Volume",
-            tint = Color.White,
-            modifier = Modifier.size(22.dp)
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .height(6.dp)
-                .clip(RoundedCornerShape(3.dp))
-                .background(Color.White.copy(alpha = 0.18f))
-        ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(level / 100f)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(ThemeBerryPrimary)
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(ThemeBerryPrimary.copy(alpha = if (level == 0) 0.08f else 0.2f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = when {
+                        level == 0 -> Icons.Filled.VolumeOff
+                        level < 50 -> Icons.Filled.VolumeDown
+                        else -> Icons.Filled.VolumeUp
+                    },
+                    contentDescription = "Volume",
+                    tint = if (level == 0) PowerampTextSecondary else ThemeBerryPrimary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Volume",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold.appWeight
+                )
+                Text(
+                    text = dbText,
+                    color = PowerampTextSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium.appWeight
+                )
+            }
+            Text(
+                text = "$level",
+                color = Color.White,
+                fontSize = 28.sp,
+                fontWeight = FontWeight.ExtraBold.appWeight
+            )
+            Text(
+                text = "%",
+                color = PowerampTextSecondary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold.appWeight,
+                modifier = Modifier.padding(start = 2.dp, top = 8.dp)
             )
         }
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            text = "$level%",
-            color = Color.White,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold.appWeight,
-            textAlign = TextAlign.End,
-            modifier = Modifier.width(40.dp)
-        )
+        Spacer(modifier = Modifier.height(12.dp))
+        // Track, fill and a glowing thumb at the current level
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(14.dp),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            val thumb = 14.dp
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(Color.White.copy(alpha = 0.12f))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(fill)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(ThemeBerryPrimary.copy(alpha = 0.55f), ThemeBerryPrimary)
+                            )
+                        )
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .offset(x = (maxWidth - thumb) * fill)
+                    .size(thumb)
+                    .shadow(6.dp, CircleShape, ambientColor = ThemeBerryPrimary, spotColor = ThemeBerryPrimary)
+                    .clip(CircleShape)
+                    .background(Color.White)
+            )
+        }
     }
 }
 
