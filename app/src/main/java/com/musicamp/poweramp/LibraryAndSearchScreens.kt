@@ -1,6 +1,9 @@
 package com.musicamp.poweramp
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.CancellationException
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode as AnimRepeatMode
@@ -90,49 +93,60 @@ import kotlinx.coroutines.launch
  * Category Drill-Down Screen (`09_all_songs.png`).
  */
 @Composable
-fun PowerampLibraryScreen(
+private fun PowerampLibraryScreenContent(
     controller: PowerampController,
     modifier: Modifier = Modifier
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(PowerampBg)
-    ) {
-        Box(
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(
             modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
+                .fillMaxSize()
+                .background(PowerampBg)
         ) {
-            AnimatedContent(
-                targetState = controller.activeLibraryCategory to controller.activeSubFilter,
-                transitionSpec = {
-                    val isDrillDown = targetState.first != null && initialState.first == null ||
-                        (targetState.second != null && initialState.second == null)
-                    val dir = if (isDrillDown) 1 else -1
-                    (slideInHorizontally(tween(260, easing = FastOutSlowInEasing)) { dir * it / 4 } +
-                        fadeIn(tween(220)) +
-                        scaleIn(initialScale = if (isDrillDown) 0.94f else 1.04f, animationSpec = tween(260)))
-                        .togetherWith(
-                            slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { -dir * it / 4 } +
-                                fadeOut(tween(180)) +
-                                scaleOut(targetScale = if (isDrillDown) 1.04f else 0.94f, animationSpec = tween(220))
-                        )
-                },
-                label = "libraryCategoryDrillDown"
-            ) { (activeCategory, _) ->
-                if (activeCategory == null) {
-                    LibraryCategoriesList(controller)
-                } else {
-                    LibraryCategoryDetailView(controller, activeCategory)
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                AnimatedContent(
+                    targetState = controller.activeLibraryCategory to controller.activeSubFilter,
+                    transitionSpec = {
+                        val isDrillDown = targetState.first != null && initialState.first == null ||
+                            (targetState.second != null && initialState.second == null)
+                        val dir = if (isDrillDown) 1 else -1
+                        (slideInHorizontally(tween(260, easing = FastOutSlowInEasing)) { dir * it / 4 } +
+                            fadeIn(tween(220)) +
+                            scaleIn(initialScale = if (isDrillDown) 0.94f else 1.04f, animationSpec = tween(260)))
+                            .togetherWith(
+                                slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { -dir * it / 4 } +
+                                    fadeOut(tween(180)) +
+                                    scaleOut(targetScale = if (isDrillDown) 1.04f else 0.94f, animationSpec = tween(220))
+                            )
+                    },
+                    label = "libraryCategoryDrillDown"
+                ) { (activeCategory, _) ->
+                    if (activeCategory == null) {
+                        LibraryCategoriesList(controller)
+                    } else {
+                        LibraryCategoryDetailView(controller, activeCategory)
+                    }
                 }
             }
+
+            PowerampBottomDock(
+                controller = controller,
+                showMiniPlayer = true
+            )
         }
 
-        PowerampBottomDock(
-            controller = controller,
-            showMiniPlayer = true
-        )
+        // Add Stream dialog (opened by the + button in Library > Streams)
+        AnimatedVisibility(
+            visible = controller.showAddStreamDialog,
+            enter = scaleIn(initialScale = 0.90f, animationSpec = tween(220)) + fadeIn(tween(180)),
+            exit = scaleOut(targetScale = 0.90f, animationSpec = tween(180)) + fadeOut(tween(150))
+        ) {
+            PowerampAddStreamDialog(controller = controller)
+        }
     }
 }
 
@@ -205,7 +219,7 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                             text = "Search",
                             color = Color(0xFF9E9E9E),
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
+                            fontWeight = FontWeight.Medium.appWeight,
                             modifier = Modifier.weight(1f)
                         )
                         Icon(
@@ -229,7 +243,7 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                                 text = "Albums",
                                 color = Color.White,
                                 fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold.appWeight
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             // "3 New" Pill Badge
@@ -243,7 +257,7 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                                     text = "$albumCount",
                                     color = ThemeBerryPrimary,
                                     fontSize = 11.sp,
-                                    fontWeight = FontWeight.ExtraBold
+                                    fontWeight = FontWeight.ExtraBold.appWeight
                                 )
                             }
                         }
@@ -323,7 +337,7 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                                 text = "Play Random",
                                 color = Color(0xCCFFFFFF),
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold.appWeight
                             )
 
                             Row(
@@ -336,7 +350,7 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                                         text = if (trackCount == 0) "No music found" else "$trackCount ${if (trackCount == 1) "song" else "songs"}",
                                         color = Color.White,
                                         fontSize = 19.sp,
-                                        fontWeight = FontWeight.ExtraBold
+                                        fontWeight = FontWeight.ExtraBold.appWeight
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
@@ -345,7 +359,7 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                                             "$artistCount ${if (artistCount == 1) "artist" else "artists"}",
                                         color = Color(0xB3FFFFFF),
                                         fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium
+                                        fontWeight = FontWeight.Medium.appWeight
                                     )
                                 }
 
@@ -397,13 +411,13 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                         text = "Artists",
                         color = PowerampTextPrimary,
                         fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold.appWeight
                     )
                     Text(
                         text = "See All",
                         color = ThemeBerryPrimary,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Bold.appWeight,
                         modifier = Modifier.clickable {
                             controller.activeSubFilter = null
                             controller.activeLibraryCategory = LibraryCategory.ARTISTS
@@ -445,7 +459,7 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                                     text = name.take(2).uppercase(),
                                     color = Color.White,
                                     fontSize = 20.sp,
-                                    fontWeight = FontWeight.Black
+                                    fontWeight = FontWeight.Black.appWeight
                                 )
                             }
                             Spacer(modifier = Modifier.height(4.dp))
@@ -453,13 +467,13 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                                 text = name,
                                 color = PowerampTextPrimary,
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold.appWeight
                             )
                             Text(
                                 text = songs,
                                 color = PowerampTextSecondary,
                                 fontSize = 10.sp,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.Medium.appWeight
                             )
                         }
                     }
@@ -483,13 +497,13 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                         text = "Genres",
                         color = PowerampTextPrimary,
                         fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold.appWeight
                     )
                     Text(
                         text = "See All",
                         color = ThemeBerryPrimary,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Bold.appWeight,
                         modifier = Modifier.clickable {
                             controller.activeSubFilter = null
                             controller.activeLibraryCategory = LibraryCategory.GENRES
@@ -529,7 +543,7 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                                 text = genreName,
                                 color = Color.White,
                                 fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold.appWeight
                             )
                         }
                     }
@@ -548,7 +562,7 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                     text = "Library Folders & Categories",
                     color = PowerampTextPrimary,
                     fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold.appWeight
                 )
                 Spacer(modifier = Modifier.height(10.dp))
             }
@@ -584,7 +598,7 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                         text = "Settings",
                         color = PowerampTextPrimary,
                         fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold.appWeight
                     )
                     Text(
                         text = "Audio engine, DSP, Look and feel, Library scan",
@@ -619,7 +633,7 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                     text = category.title,
                     color = PowerampTextPrimary,
                     fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold.appWeight
                 )
                 if (category == LibraryCategory.QUEUE) {
                     Spacer(modifier = Modifier.width(12.dp))
@@ -627,7 +641,7 @@ private fun LibraryCategoriesList(controller: PowerampController) {
                         text = if (controller.queueTracks.isEmpty()) "empty" else "${controller.queueTracks.size}",
                         color = PowerampTextSecondary,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.Medium.appWeight
                     )
                 }
             }
@@ -823,7 +837,7 @@ private fun LibraryCategoryDetailView(
                                 text = if (subFilter != null) category.title else "Library",
                                 color = PowerampTextPrimary,
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.ExtraBold
+                                fontWeight = FontWeight.ExtraBold.appWeight
                             )
                         }
                     }
@@ -852,7 +866,7 @@ private fun LibraryCategoryDetailView(
                         text = subFilter ?: category.title,
                         color = PowerampTextPrimary,
                         fontSize = 30.sp,
-                        fontWeight = FontWeight.ExtraBold,
+                        fontWeight = FontWeight.ExtraBold.appWeight,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -948,7 +962,7 @@ private fun LibraryCategoryDetailView(
                                 text = if (controller.isSelectionMode) "Done (${controller.selectedTrackIds.size})" else "Select",
                                 color = if (controller.isSelectionMode) Color.White else PowerampTextPrimary,
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.ExtraBold
+                                fontWeight = FontWeight.ExtraBold.appWeight
                             )
                         }
                     }
@@ -1003,14 +1017,14 @@ private fun LibraryCategoryDetailView(
                             text = "${controller.selectedTrackIds.size} selected",
                             color = Color.White,
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold.appWeight
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text(
                                 text = "+ Queue",
                                 color = PowerampNeonGreen,
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Bold.appWeight,
                                 modifier = Modifier.clickable {
                                     val selected = controller.allTracks.filter { it.id in controller.selectedTrackIds }
                                     controller.queueTracks.addAll(selected)
@@ -1023,7 +1037,7 @@ private fun LibraryCategoryDetailView(
                                 text = "Bookmark",
                                 color = Color.White,
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Bold.appWeight,
                                 modifier = Modifier.clickable {
                                     val selected = controller.allTracks.filter { it.id in controller.selectedTrackIds }
                                     selected.forEach { controller.addBookmarkForTrack(it) }
@@ -1070,7 +1084,7 @@ private fun LibraryCategoryDetailView(
                                     text = bm.trackTitle,
                                     color = PowerampTextPrimary,
                                     fontSize = 16.sp,
-                                    fontWeight = FontWeight.ExtraBold,
+                                    fontWeight = FontWeight.ExtraBold.appWeight,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -1078,13 +1092,13 @@ private fun LibraryCategoryDetailView(
                                     text = bm.artist,
                                     color = PowerampTextSecondary,
                                     fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold.appWeight
                                 )
                                 Text(
                                     text = "Position: ${bm.formattedPosition}",
                                     color = PowerampNeonGreen,
                                     fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold.appWeight
                                 )
                             }
                             Icon(
@@ -1099,16 +1113,28 @@ private fun LibraryCategoryDetailView(
                     }
                 }
             } else if (category == LibraryCategory.STREAMS) {
-                items(controller.streams) { stream ->
+                if (controller.streams.isEmpty()) {
+                    item {
+                        EmptyListPlaceholder(
+                            title = "No streams yet",
+                            subtitle = "Tap + to add an internet radio stream URL"
+                        )
+                    }
+                }
+                items(controller.streams, key = { it.id }) { stream ->
+                    val isCurrent = controller.currentStream?.id == stream.id
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                             .clip(RoundedCornerShape(20.dp))
                             .background(PowerampSurface)
-                            .clickable {
-                                controller.showToast("Streams are not supported yet", stream.title)
-                            }
+                            .border(
+                                1.2.dp,
+                                if (isCurrent) ThemeBerryPrimary else Color.Transparent,
+                                RoundedCornerShape(20.dp)
+                            )
+                            .clickable { controller.playStream(stream) }
                             .padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -1117,9 +1143,11 @@ private fun LibraryCategoryDetailView(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = stream.title,
-                                color = PowerampTextPrimary,
+                                color = if (isCurrent) ThemeBerryPrimary else PowerampTextPrimary,
                                 fontSize = 16.sp,
-                                fontWeight = FontWeight.ExtraBold
+                                fontWeight = FontWeight.ExtraBold.appWeight,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 text = stream.url,
@@ -1129,6 +1157,17 @@ private fun LibraryCategoryDetailView(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Icon(
+                            imageVector = Icons.Filled.Delete,
+                            contentDescription = "Delete stream ${stream.title}",
+                            tint = Color(0xFF8C8E93),
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .clickable { controller.removeStream(stream) }
+                                .padding(7.dp)
+                        )
                     }
                 }
             } else if (groupingItems != null) {
@@ -1154,14 +1193,14 @@ private fun LibraryCategoryDetailView(
                                 text = groupTitle,
                                 color = PowerampTextPrimary,
                                 fontSize = 17.sp,
-                                fontWeight = FontWeight.ExtraBold
+                                fontWeight = FontWeight.ExtraBold.appWeight
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = groupSub,
                                 color = PowerampTextSecondary,
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold.appWeight
                             )
                         }
                     }
@@ -1235,7 +1274,7 @@ private fun LibraryCategoryDetailView(
                                 text = track.title,
                                 color = PowerampTextPrimary,
                                 fontSize = 18.sp,
-                                fontWeight = FontWeight.ExtraBold,
+                                fontWeight = FontWeight.ExtraBold.appWeight,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -1244,7 +1283,7 @@ private fun LibraryCategoryDetailView(
                                 text = track.artist,
                                 color = PowerampTextSecondary,
                                 fontSize = 13.5.sp,
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.Bold.appWeight,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -1254,13 +1293,13 @@ private fun LibraryCategoryDetailView(
                                     text = "𝄞 ",
                                     color = Color(0xFF8E9095),
                                     fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold.appWeight
                                 )
                                 Text(
                                     text = track.metaLine,
                                     color = Color(0xFF9EA0A5),
                                     fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold.appWeight
                                 )
                             }
                         }
@@ -1327,14 +1366,14 @@ private fun EmptyListPlaceholder(title: String, subtitle: String) {
             text = title,
             color = Color(0xFF8E9095),
             fontSize = 17.sp,
-            fontWeight = FontWeight.ExtraBold
+            fontWeight = FontWeight.ExtraBold.appWeight
         )
         Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = subtitle,
             color = Color(0xFF606266),
             fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold
+            fontWeight = FontWeight.SemiBold.appWeight
         )
     }
 }
@@ -1344,7 +1383,7 @@ private fun EmptyListPlaceholder(title: String, subtitle: String) {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun PowerampSearchScreen(
+private fun PowerampSearchScreenContent(
     controller: PowerampController,
     modifier: Modifier = Modifier
 ) {
@@ -1394,7 +1433,7 @@ fun PowerampSearchScreen(
                         text = "Search",
                         color = Color(0xFF9EA0A5),
                         fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold.appWeight
                     )
                 }
                 BasicTextField(
@@ -1402,9 +1441,10 @@ fun PowerampSearchScreen(
                     onValueChange = { controller.searchQuery = it },
                     singleLine = true,
                     textStyle = TextStyle(
+                        fontFamily = AppFontFamily,
                         color = Color.White,
                         fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold.appWeight
                     ),
                     cursorBrush = SolidColor(PowerampNeonGreen),
                     modifier = Modifier.fillMaxWidth()
@@ -1442,7 +1482,7 @@ fun PowerampSearchScreen(
                         text = chip,
                         color = Color.White,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.ExtraBold
+                        fontWeight = FontWeight.ExtraBold.appWeight
                     )
                 }
             }
@@ -1511,7 +1551,7 @@ fun PowerampSearchScreen(
                         text = "Select",
                         color = tintColor,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold.appWeight
                     )
                 }
             }
@@ -1569,7 +1609,7 @@ fun PowerampSearchScreen(
                             text = track.title,
                             color = Color.White,
                             fontSize = 16.5.sp,
-                            fontWeight = FontWeight.ExtraBold,
+                            fontWeight = FontWeight.ExtraBold.appWeight,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -1577,13 +1617,13 @@ fun PowerampSearchScreen(
                             text = track.artist,
                             color = Color(0xFFD8DADF),
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold.appWeight
                         )
                         Text(
                             text = "𝄞 ${track.metaLine}",
                             color = PowerampTextSecondary,
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold.appWeight
                         )
                     }
                 }
@@ -1601,11 +1641,26 @@ fun PowerampSearchScreen(
  * 100% Pixel-Perfect Poweramp Lyrics View Screen (`13_lyrics.png`).
  */
 @Composable
-fun PowerampLyricsScreen(
+private fun PowerampLyricsScreenContent(
     controller: PowerampController,
     modifier: Modifier = Modifier
 ) {
     val track = controller.actionTargetTrack ?: controller.currentTrack
+    // Lyrics: user-edited text, sibling .lrc file or embedded tag (null while loading)
+    var lyricsText by remember(track?.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(track?.id, track?.lyrics) {
+        lyricsText = track?.let {
+            try {
+                controller.loadLyrics(it)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                ""
+            }
+        } ?: ""
+    }
+    val parsedLyrics = remember(lyricsText) { lyricsText?.let { parseLyrics(it) } }
+    val isPlayingTrack = track != null && track.id == controller.currentTrack?.id
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -1629,7 +1684,7 @@ fun PowerampLyricsScreen(
                     text = track?.title ?: "No track",
                     color = Color.White,
                     fontSize = 18.sp,
-                    fontWeight = FontWeight.ExtraBold,
+                    fontWeight = FontWeight.ExtraBold.appWeight,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -1638,14 +1693,14 @@ fun PowerampLyricsScreen(
                     text = track?.artist ?: "Unknown artist",
                     color = Color(0xFFE2E4E8),
                     fontSize = 13.5.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold.appWeight
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "𝄞 ${track?.metaLine ?: ""}",
                     color = PowerampTextSecondary,
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold.appWeight
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
@@ -1677,21 +1732,30 @@ fun PowerampLyricsScreen(
                 .padding(horizontal = 24.dp),
             contentAlignment = Alignment.Center
         ) {
-            val customLyrics = track?.lyrics?.takeIf { it.isNotBlank() }
-            if (customLyrics == null) {
+            val lyrics = parsedLyrics
+            if (lyrics == null) {
+                // Still loading: keep the area empty rather than flashing "No lyrics found"
+            } else if (lyrics.synced) {
+                SyncedLyricsView(
+                    lines = lyrics.lines,
+                    positionMs = { if (isPlayingTrack) controller.currentPositionMs else -1L },
+                    onSeek = { ms -> if (isPlayingTrack) controller.seekToMs(ms) },
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else if (lyrics.plainLines.isEmpty()) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = "No lyrics found",
                         color = Color(0xFF9EA0A5),
                         fontSize = 19.sp,
-                        fontWeight = FontWeight.ExtraBold
+                        fontWeight = FontWeight.ExtraBold.appWeight
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = "Lyrics can be searched in 3rd party app",
                         color = Color(0xFFB5B7BC),
                         fontSize = 12.5.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold.appWeight
                     )
                     Spacer(modifier = Modifier.height(18.dp))
                     Box(
@@ -1710,7 +1774,7 @@ fun PowerampLyricsScreen(
                             text = "Open lyrics app",
                             color = Color.White,
                             fontSize = 13.5.sp,
-                            fontWeight = FontWeight.ExtraBold
+                            fontWeight = FontWeight.ExtraBold.appWeight
                         )
                     }
                     Spacer(modifier = Modifier.height(26.dp))
@@ -1729,12 +1793,12 @@ fun PowerampLyricsScreen(
                 LazyColumn(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    items(customLyrics.lines()) { line ->
+                    items(lyrics.plainLines) { line ->
                         Text(
                             text = line,
                             color = Color.White,
                             fontSize = 17.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Bold.appWeight,
                             modifier = Modifier.padding(vertical = 6.dp)
                         )
                     }
@@ -1748,3 +1812,16 @@ fun PowerampLyricsScreen(
         )
     }
 }
+
+// ---- Public entry points: each screen applies the Look and Feel settings (font, status bar) ----
+@Composable
+fun PowerampLibraryScreen(controller: PowerampController, modifier: Modifier = Modifier) =
+    LookAndFeelScope(controller) { PowerampLibraryScreenContent(controller, modifier) }
+
+@Composable
+fun PowerampSearchScreen(controller: PowerampController, modifier: Modifier = Modifier) =
+    LookAndFeelScope(controller) { PowerampSearchScreenContent(controller, modifier) }
+
+@Composable
+fun PowerampLyricsScreen(controller: PowerampController, modifier: Modifier = Modifier) =
+    LookAndFeelScope(controller) { PowerampLyricsScreenContent(controller, modifier) }

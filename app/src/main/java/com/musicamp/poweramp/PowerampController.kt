@@ -26,6 +26,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -34,7 +35,9 @@ import kotlin.math.ln
 import kotlin.math.sqrt
 import android.media.AudioManager
 import android.media.MediaMetadataRetriever
-import android.media.MediaPlayer
+import android.media.AudioFormat
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
 import android.media.MediaScannerConnection
 import android.media.PlaybackParams
 import android.os.Environment
@@ -44,6 +47,7 @@ import android.media.audiofx.Virtualizer
 import android.media.audiofx.Visualizer
 import android.net.Uri
 import android.provider.MediaStore
+import android.provider.DocumentsContract
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -64,10 +68,20 @@ import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.random.Random
 
+/** Simple Last.fm Scrobbler broadcast states. */
+private const val SCROBBLE_START = 0
+private const val SCROBBLE_RESUME = 1
+private const val SCROBBLE_PAUSE = 2
+private const val SCROBBLE_COMPLETE = 3
+/** Ids of CUE virtual tracks live far above MediaStore ids. */
+private const val CUE_ID_BASE = 1L shl 50
+/** Ids of DSD files found in user-granted folders. */
+private const val SAF_ID_BASE = 1L shl 52
+
 class PowerampController(private val context: Context) {
 
     private val scope = CoroutineScope(Dispatchers.Main)
-    private var mediaPlayer: MediaPlayer? = null
+    private var mediaPlayer: PlayerEngine? = null
     private var equalizerFx: Equalizer? = null
     private var virtualizerFx: Virtualizer? = null
     private var presetReverbFx: PresetReverb? = null
@@ -85,10 +99,10 @@ class PowerampController(private val context: Context) {
     @Volatile private var fftFresh = false
     /** Set by the Activity so the controller can ask for RECORD_AUDIO (needed only to read our own output for the visualizer). */
     var recordPermissionRequester: (() -> Unit)? = null
-    private var nextPlayer: MediaPlayer? = null
+    private var nextPlayer: PlayerEngine? = null
     private var nextPlayerTrackId = -1L
     private var nextPrepared = false
-    private var fadingOutPlayer: MediaPlayer? = null
+    private var fadingOutPlayer: PlayerEngine? = null
     private var fadeJob: Job? = null
     private var fadeInGain = 1f
     private var duckGain = 1f
@@ -169,7 +183,7 @@ class PowerampController(private val context: Context) {
     // Playback State
     var currentTrackIndex by mutableIntStateOf(0)
     val currentTrack: AudioTrack?
-        get() = allTracks.getOrNull(currentTrackIndex)
+        get() = streamTrack ?: allTracks.getOrNull(currentTrackIndex)
 
     var isPlaying by mutableStateOf(false)
     var currentPositionMs by mutableLongStateOf(0L)
@@ -283,6 +297,210 @@ class PowerampController(private val context: Context) {
     var pauseOnHeadsetDisconnect by mutableStateOf(true)
     var resumeOnHeadsetConnect by mutableStateOf(true)
 
+    /** Bit-perfect USB DAC output (Android 14+). Bypasses the system mixer, effects and software volume. */
+    var bitPerfectEnabled by mutableStateOf(false)
+        private set
+    var bitPerfectActive by mutableStateOf(false)
+        private set
+    var bitPerfectStatus by mutableStateOf("Off")
+        private set
+    private var bitPerfectOut: BitPerfectOutput? = null
+
+    private fun bitPerfectOutput(): BitPerfectOutput =
+        bitPerfectOut ?: BitPerfectOutput(audioManager, focusAttributes, uiHandler) { onUsbDevicesChanged() }
+            .also { bitPerfectOut = it }
+
+    fun setBitPerfect(enabled: Boolean) {
+        if (enabled == bitPerfectEnabled) return
+        bitPerfectEnabled = enabled
+        if (!enabled) {
+            bitPerfectOut?.release()
+            bitPerfectActive = false
+            bitPerfectStatus = "Off"
+        }
+        reopenForOutputChange()
+        showToast(if (enabled) "Bit-perfect mode on" else "Bit-perfect mode off", bitPerfectStatus)
+    }
+
+    /** MediaPlayer path: points the DAC at [sampleRateHz] (16-bit) or releases it, and refreshes effects. */
+    private fun updateBitPerfect(sampleRateHz: Int?) {
+        if (bitPerfectEnabled) {
+            val out = bitPerfectOutput()
+            bitPerfectActive = out.engage(sampleRateHz ?: currentTrack?.sampleRateHz ?: 44100)
+            bitPerfectStatus = out.statusText
+        } else {
+            bitPerfectOut?.release()
+            bitPerfectActive = false
+            bitPerfectStatus = "Off"
+        }
+        applyAllEffectsNow()
+    }
+
+    /** Re-opens the current track at the same position so a new output configuration takes effect. */
+    private fun reopenForOutputChange() {
+        if (mediaPlayer != null && currentStream == null && allTracks.isNotEmpty()) {
+            loadAndStart(currentTrackIndex, autoPlay = isPlaying, positionMs = currentPositionMs)
+        } else {
+            syncBitPerfectState()
+            applyAllEffectsNow()
+        }
+    }
+
+    private fun onUsbDevicesChanged() {
+        if (!bitPerfectEnabled) return
+        reopenForOutputChange()
+        showToast("Bit-perfect", bitPerfectStatus)
+    }
+    // ------------------------------------------------------------------------------------------
+    // Native audio engine (MediaCodec + AudioTrack + own DSP). Falls back to MediaPlayer per track.
+    // ------------------------------------------------------------------------------------------
+    /** User setting: true = MusicAmp native engine (DSP, ReplayGain, DVC, hi-res, DSD), false = Android MediaPlayer. */
+    var useNativeEngine by mutableStateOf(true)
+        private set
+    /** True while the current track is playing through the native engine. */
+    var nativeEngineActive by mutableStateOf(false)
+        private set
+    /** Human-readable description of the current output path, for the settings status card. */
+    var engineStatus by mutableStateOf("Idle")
+        private set
+
+    fun setNativeEngine(enabled: Boolean) {
+        if (enabled == useNativeEngine) return
+        useNativeEngine = enabled
+        reopenForOutputChange()
+    }
+
+    // ----- Direct Volume Control -----
+    /** True when volume is applied in software and the system media volume is pinned to max. */
+    var dvcActive by mutableStateOf(false)
+        private set
+
+    /** Volume keys / knob while DVC is active (0..100). */
+    fun setDvcVolumePercent(percent: Int) {
+        volumePercent = percent.coerceIn(0, 100)
+        applyVolumeAndBalance()
+    }
+
+    /** Hardware volume key step while DVC is active: direction -1, 0 or +1. */
+    fun adjustDvcVolume(direction: Int) {
+        if (direction == 0) return
+        setDvcVolumePercent(volumePercent + direction * 4)
+    }
+
+    // ----- Parametric equalizer (AutoEQ compatible) -----
+    var parametricEqEnabled by mutableStateOf(false)
+    val parametricBands = mutableStateListOf<ParametricBand>()
+    /** Name of the imported AutoEQ profile, empty if none. */
+    var parametricProfileName by mutableStateOf("")
+
+    fun setParametricEq(enabled: Boolean) {
+        parametricEqEnabled = enabled
+        applyEqualizerBands()
+    }
+
+    fun addParametricBand() {
+        parametricBands.add(ParametricBand(FilterType.PEAK, 1000f, 0f, 1.0f))
+        applyEqualizerBands()
+    }
+
+    fun updateParametricBand(index: Int, band: ParametricBand) {
+        if (index !in parametricBands.indices) return
+        parametricBands[index] = band.copy(
+            freqHz = band.freqHz.coerceIn(20f, 20000f),
+            gainDb = band.gainDb.coerceIn(-24f, 24f),
+            q = band.q.coerceIn(0.1f, 10f)
+        )
+        applyEqualizerBands()
+    }
+
+    fun removeParametricBand(index: Int) {
+        if (index in parametricBands.indices) parametricBands.removeAt(index)
+        applyEqualizerBands()
+    }
+
+    fun resetParametricEq() {
+        parametricBands.clear()
+        parametricProfileName = ""
+        applyEqualizerBands()
+    }
+
+    /** Imports an AutoEQ / Equalizer APO "ParametricEQ.txt" picked by the user (Storage Access Framework uri). */
+    fun importAutoEq(uri: Uri, displayName: String? = null) {
+        scope.launch {
+            val text = withContext(Dispatchers.IO) {
+                try {
+                    context.contentResolver.openInputStream(uri)?.use { s ->
+                        s.readBytes().let { b -> if (b.size > 256 * 1024) null else String(b, Charsets.UTF_8) }
+                    }
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            val parsed = text?.let { AutoEqParser.parse(it) }
+            if (parsed == null) {
+                showToast("Import failed", "Not an AutoEQ ParametricEQ.txt file")
+                return@launch
+            }
+            parametricBands.clear()
+            parametricBands.addAll(parsed.bands)
+            preampDb = parsed.preampDb.coerceIn(-15f, 15f)
+            parametricProfileName = displayName?.substringBeforeLast('.')?.removeSuffix(" ParametricEQ")
+                ?: "AutoEQ profile"
+            parametricEqEnabled = true
+            eqEnabled = true
+            applyEqualizerBands()
+            showToast("AutoEQ imported", "${parsed.bands.size} filters, preamp %.1f dB".format(parsed.preampDb) +
+                if (!nativeEngineActive) " (needs the MusicAmp engine)" else "")
+        }
+    }
+
+    // ----- Internet radio streams -----
+    /** The stream currently playing, or null when a library track is loaded. */
+    var currentStream by mutableStateOf<StreamItem?>(null)
+        private set
+
+    fun addStream(title: String, url: String) {
+        val u = url.trim()
+        if (!(u.startsWith("http://", true) || u.startsWith("https://", true))) {
+            showToast("Invalid stream URL", "Use an http:// or https:// address")
+            return
+        }
+        streams.add(StreamItem(System.currentTimeMillis(), title.trim().ifBlank { Uri.parse(u).host ?: "Stream" }, u))
+        showToast("Stream added", title)
+    }
+
+    /** Plays an internet radio stream (stops the library track). */
+    fun playStream(stream: StreamItem) {
+        startStream(stream)
+    }
+
+    private fun startStream(stream: StreamItem) {
+        startStreamPlayback(stream)
+    }
+
+    fun removeStream(stream: StreamItem) {
+        streams.removeAll { it.id == stream.id }
+    }
+
+    // ----- Lyrics -----
+    /**
+     * Lyrics for [track]: user-edited text first, then a sibling .lrc file, then lyrics embedded in the tags.
+     * Synced (LRC) text keeps its [mm:ss.xx] timestamps.
+     */
+    suspend fun loadLyrics(track: AudioTrack): String = withContext(Dispatchers.IO) {
+        if (track.lyrics.isNotBlank()) return@withContext track.lyrics
+        try {
+            if (track.filePath.isNotBlank()) {
+                val f = File(track.filePath)
+                val lrc = File(f.parentFile, f.nameWithoutExtension + ".lrc")
+                if (lrc.exists() && lrc.canRead() && lrc.length() < 512 * 1024) return@withContext lrc.readText()
+                readSidecar(track.filePath, "lrc")?.let { return@withContext it }
+            }
+        } catch (_: Exception) {
+        }
+        TagReader.read(context, track)?.lyrics.orEmpty()
+    }
+
     // 3. Visualization
     var visFadedControlsOpacity by mutableFloatStateOf(0.40f) // 0.10f..1.00f
     var visPresetDurationSec by mutableIntStateOf(10) // 5, 10, 15, 30, 0 (Manual)
@@ -296,7 +514,8 @@ class PowerampController(private val context: Context) {
     var backgroundDimOpacity by mutableFloatStateOf(0.35f) // 0.0f..0.8f
 
     // 5. Album Art
-    var autoDownloadAlbumArt by mutableStateOf(true)
+    /** Off by default: sends album and artist names to MusicBrainz / Cover Art Archive. */
+    var autoDownloadAlbumArt by mutableStateOf(false)
     var highResAlbumArt by mutableStateOf(true)
     var preferEmbeddedArt by mutableStateOf(true)
     var albumArtOnLockscreen by mutableStateOf(true)
@@ -336,6 +555,8 @@ class PowerampController(private val context: Context) {
                     override fun onChange(selfChange: Boolean) {
                         // Ignore echoes of our own setStreamVolume() and active knob dragging
                         if (SystemClock.uptimeMillis() - lastVolumeApplyAt < 600L) return
+                        // With DVC the system volume is held at max; the knob is the app's own volume
+                        if (dvcActive) return
                         try {
                             val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
                             val cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
@@ -367,19 +588,27 @@ class PowerampController(private val context: Context) {
     // Library scan (MediaStore, off the main thread)
     // ==========================================================================================
     fun scanMediaLibrary() {
-        refreshLibrary(showFeedback = false)
+        // Fast MediaStore query first so the library appears at once; then, if enabled, a silent
+        // file-system rescan that picks up files added while the app was closed.
+        refreshLibrary(showFeedback = false, deepScan = false)
+        if (autoScanOnStartup) {
+            scope.launch {
+                while (scanning) delay(100L)
+                refreshLibrary(showFeedback = false, deepScan = true)
+            }
+        }
     }
 
     /**
      * Rescans device storage & MediaStore for newly added or removed audio files.
      * Clears the negative artwork cache so freshly added covers appear immediately.
      */
-    fun refreshLibrary(showFeedback: Boolean = true) {
+    fun refreshLibrary(showFeedback: Boolean = true, deepScan: Boolean = showFeedback) {
         if (scanning) return
         scanning = true
         val prevIds = allTracks.map { it.id }.toSet()
         scope.launch {
-            if (showFeedback) {
+            if (deepScan) {
                 // Ask Android's MediaScanner to index any newly dropped files in Music / Download folders
                 withContext(Dispatchers.IO) {
                     try {
@@ -389,18 +618,23 @@ class PowerampController(private val context: Context) {
                         selectedMusicFolders.forEach { folder ->
                             dirs.add(File(folder.replace("/sdcard", Environment.getExternalStorageDirectory().absolutePath)))
                         }
-                        val audioExts = setOf("mp3", "flac", "wav", "m4a", "aac", "ogg", "opus", "wma", "aiff")
+                        val audioExts = setOf("mp3", "flac", "wav", "m4a", "aac", "ogg", "opus", "wma", "aiff", "dsf", "dff", "ape", "wv")
                         val pathsToScan = ArrayList<String>()
+                        // The silent startup scan only re-indexes files changed since the last scan
+                        val since = if (showFeedback) 0L else prefs.getLong("lastDeepScanAt", 0L)
+                        prefs.edit().putLong("lastDeepScanAt", System.currentTimeMillis()).apply()
                         dirs.filter { it.exists() && it.isDirectory }.forEach { dir ->
                             dir.walkTopDown().maxDepth(4).forEach { f ->
-                                if (f.isFile && f.extension.lowercase() in audioExts) {
+                                if (f.isFile && f.extension.lowercase() in audioExts && f.lastModified() > since) {
                                     pathsToScan.add(f.absolutePath)
                                 }
                             }
                         }
                         if (pathsToScan.isNotEmpty()) {
-                            MediaScannerConnection.scanFile(context, pathsToScan.toTypedArray(), null, null)
-                            delay(250L)
+                            // Wait for the scanner to finish (bounded), so the requery below sees the new files
+                            val done = java.util.concurrent.CountDownLatch(pathsToScan.size)
+                            MediaScannerConnection.scanFile(context, pathsToScan.toTypedArray(), null) { _, _ -> done.countDown() }
+                            done.await(15, java.util.concurrent.TimeUnit.SECONDS)
                         }
                     } catch (_: Exception) {
                     }
@@ -432,6 +666,142 @@ class PowerampController(private val context: Context) {
         if (selectedMusicFolders.isEmpty()) return true
         val norm = path.replace("/storage/emulated/0", "/sdcard")
         return selectedMusicFolders.any { norm.startsWith(it.replace("/storage/emulated/0", "/sdcard")) }
+    }
+
+    // ==========================================================================================
+    // Extra folders granted through the Storage Access Framework. Android does not index DSD files as
+    // audio and hides .cue / .lrc files from apps that only hold the audio permission; a folder the user
+    // picks once can be read directly.
+    // ==========================================================================================
+    /** Tree URIs (as strings) the user granted. */
+    val extraFolders = mutableStateListOf<String>()
+    /** Lower-case file-system path of each .cue / .lrc found in [extraFolders] -> its document URI. */
+    @Volatile private var safSidecars: Map<String, Uri> = emptyMap()
+
+    fun addExtraFolder(uri: Uri) {
+        try {
+            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: Exception) {
+            showToast("Folder access denied")
+            return
+        }
+        val s = uri.toString()
+        if (s !in extraFolders) extraFolders.add(s)
+        refreshLibrary(showFeedback = true, deepScan = false)
+    }
+
+    fun removeExtraFolder(uriString: String) {
+        try {
+            context.contentResolver.releasePersistableUriPermission(Uri.parse(uriString), Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: Exception) {
+        }
+        extraFolders.remove(uriString)
+        refreshLibrary(showFeedback = false, deepScan = false)
+    }
+
+    /** Human-readable name of a granted folder, e.g. "Music/DSD". */
+    fun extraFolderLabel(uriString: String): String = try {
+        DocumentsContract.getTreeDocumentId(Uri.parse(uriString)).substringAfter(':').ifBlank { "Internal storage" }
+    } catch (_: Exception) {
+        uriString
+    }
+
+    /** "primary:Music/Album/x.cue" -> "/storage/emulated/0/Music/Album/x.cue" (the path MediaStore reports). */
+    private fun docIdToPath(docId: String): String {
+        val vol = docId.substringBefore(':')
+        val rel = docId.substringAfter(':', "")
+        val root = if (vol.equals("primary", true)) "/storage/emulated/0" else "/storage/$vol"
+        return if (rel.isEmpty()) root else "$root/$rel"
+    }
+
+    private fun scanExtraFolders(): List<AudioTrack> {
+        val tracks = ArrayList<AudioTrack>()
+        val side = HashMap<String, Uri>()
+        val resolver = context.contentResolver
+        val cols = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED
+        )
+        for (s in extraFolders.toList()) {
+            val tree = Uri.parse(s)
+            val rootId = try { DocumentsContract.getTreeDocumentId(tree) } catch (_: Exception) { continue }
+            val stack = ArrayDeque<Pair<String, Int>>()
+            stack.add(rootId to 0)
+            var visited = 0
+            while (stack.isNotEmpty() && visited < 20_000) {
+                val (docId, depth) = stack.removeLast()
+                try {
+                    resolver.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId), cols, null, null, null)?.use { c ->
+                        while (c.moveToNext()) {
+                            visited++
+                            val id = c.getString(0) ?: continue
+                            val name = c.getString(1) ?: continue
+                            if (c.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) {
+                                if (depth < 6) stack.add(id to depth + 1)
+                                continue
+                            }
+                            val docUri = DocumentsContract.buildDocumentUriUsingTree(tree, id)
+                            when (name.substringAfterLast('.', "").lowercase()) {
+                                "cue", "lrc" -> side[docIdToPath(id).lowercase()] = docUri
+                                "dsf", "dff" -> dsdTrack(docUri, id, name, c.getLong(3), c.getLong(4))?.let { tracks.add(it) }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        }
+        safSidecars = side
+        val minDuration = if (ignoreShortTracks) 30_000L else 0L
+        return tracks.filter { it.durationMs >= minDuration && it.id !in hiddenTrackIds }
+    }
+
+    private fun dsdTrack(uri: Uri, docId: String, name: String, size: Long, modified: Long): AudioTrack? {
+        val dsd = DsdSource.open(context, uri, "") ?: return null
+        val durationMs: Long
+        val rate: Int
+        try {
+            durationMs = dsd.durationUs / 1000L
+            rate = dsd.dsdRate
+        } finally {
+            dsd.release()
+        }
+        val path = docIdToPath(docId)
+        val parent = path.substringBeforeLast('/')
+        val ext = name.substringAfterLast('.').lowercase()
+        val base = AudioTrack(id = 0L, title = name, artist = "", album = "", uri = uri, formatExt = ext)
+        val tags = TagReader.read(context, base)
+        val title = tags?.title ?: name.substringBeforeLast('.')
+        val artist = tags?.artist ?: "Unknown artist"
+        return AudioTrack(
+            id = SAF_ID_BASE + (docId.hashCode().toLong() and 0xFFFFFFFFL),
+            title = title, tagTitle = title, artist = artist, albumArtist = artist,
+            album = tags?.album ?: parent.substringAfterLast('/'),
+            genre = "Unknown genre", year = 0, composer = "Unknown composer",
+            folderPath = parent, folderName = parent.substringAfterLast('/'), fileName = name,
+            durationMs = durationMs.coerceAtLeast(1L), uri = uri, filePath = "",
+            bitrateKbps = rate / 1000 * 2, sampleRateHz = rate, formatExt = ext,
+            fileSizeKb = (size / 1024L).coerceAtLeast(1L), trackNumber = tags?.trackNumber ?: 0,
+            dateAddedSec = modified / 1000L, waveformBars = NEUTRAL_WAVEFORM
+        )
+    }
+
+    /** Reads a .cue / .lrc next to [audioPath] from a granted folder, if there is one. */
+    private fun readSidecar(audioPath: String, ext: String): String? {
+        if (audioPath.isBlank()) return null
+        val noExt = audioPath.substringBeforeLast('.')
+        val uri = safSidecars["$noExt.$ext".lowercase()] ?: safSidecars["$audioPath.$ext".lowercase()] ?: return null
+        return try {
+            context.contentResolver.openInputStream(uri)?.use { s ->
+                val bytes = s.readBytes()
+                if (bytes.size > 512 * 1024) return null
+                val text = String(bytes, Charsets.UTF_8)
+                if (text.contains('�')) String(bytes, charset("windows-1252")) else text
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun queryMediaStore(): List<AudioTrack> {
@@ -534,7 +904,60 @@ class PowerampController(private val context: Context) {
         } catch (_: SecurityException) {
             // Audio permission not granted yet
         }
+        return expandCueTracks(out + scanExtraFolders())
+    }
+
+    /**
+     * Splits long single-file album rips into the tracks of their cue sheet: an embedded CUESHEET tag,
+     * a FLAC CUESHEET block, or a .cue file next to the audio file (when the file system allows reading it).
+     */
+    private fun expandCueTracks(tracks: List<AudioTrack>): List<AudioTrack> {
+        val out = ArrayList<AudioTrack>(tracks.size)
+        for (t in tracks) {
+            val cue = if (t.durationMs >= 10 * 60_000L) try { findCue(t) } catch (_: Exception) { null } else null
+            if (cue == null) { out.add(t); continue }
+            for ((i, ct) in cue.tracks.withIndex()) {
+                val end = cue.tracks.getOrNull(i + 1)?.startMs ?: 0L
+                val dur = (if (end > 0L) end else t.durationMs) - ct.startMs
+                if (dur <= 0L) continue
+                val title = ct.title?.takeIf { it.isNotBlank() } ?: "Track %02d".format(ct.number)
+                out.add(
+                    t.copy(
+                        id = CUE_ID_BASE + t.id * 128 + ct.number,
+                        title = title, tagTitle = title,
+                        artist = ct.performer ?: cue.albumPerformer ?: t.artist,
+                        albumArtist = cue.albumPerformer ?: t.albumArtist,
+                        album = cue.albumTitle ?: t.album,
+                        trackNumber = ct.number,
+                        durationMs = dur,
+                        cueStartMs = ct.startMs,
+                        cueEndMs = end
+                    )
+                )
+            }
+        }
         return out
+    }
+
+    private fun findCue(t: AudioTrack): CueSheet? {
+        val tags = tagsFor(t)
+        tags?.cueSheet?.let { text -> CueParser.parse(text, t.fileName)?.let { return it } }
+        val rate = tags?.sampleRate
+        if (tags != null && rate != null && rate > 0 && tags.flacCueOffsets.size >= 2) {
+            return CueSheet(null, null, tags.flacCueOffsets.map { (n, s) -> CueTrack(n, null, null, s * 1000L / rate) })
+        }
+        readSidecar(t.filePath, "cue")?.let { text -> CueParser.parse(text, t.fileName)?.let { return it } }
+        if (t.filePath.isBlank()) return null
+        val audio = File(t.filePath)
+        val candidates = listOf(File(audio.parentFile, audio.nameWithoutExtension + ".cue"), File(audio.path + ".cue"))
+        for (c in candidates) {
+            if (!c.canRead() || c.length() > 256 * 1024) continue
+            val bytes = c.readBytes()
+            var text = String(bytes, Charsets.UTF_8)
+            if (text.contains('�')) text = String(bytes, charset("windows-1252")) // older rippers
+            CueParser.parse(text, t.fileName)?.let { return it }
+        }
+        return null
     }
 
     private fun applyScanResult(found: List<AudioTrack>) {
@@ -601,42 +1024,67 @@ class PowerampController(private val context: Context) {
     suspend fun loadArt(track: AudioTrack): Bitmap? = withContext(Dispatchers.IO) {
         artCache.get(track.id)?.let { return@withContext it }
         if (track.id in noArtIds) return@withContext null
-        var bmp: Bitmap? = null
-        val retriever = MediaMetadataRetriever()
-        try {
-            if (track.uri != null) retriever.setDataSource(context, track.uri) else retriever.setDataSource(track.filePath)
-            retriever.embeddedPicture?.let { bytes ->
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                var sample = 1
-                while (bounds.outWidth / sample > 1000) sample *= 2
-                bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
-            }
-        } catch (_: Exception) {
-        } finally {
-            try { retriever.release() } catch (_: Exception) {}
-        }
-        // MediaStore thumbnail: works with the audio permission only and also covers folder art (cover.jpg etc.)
-        if (bmp == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && track.uri != null) {
-            try {
-                bmp = context.contentResolver.loadThumbnail(track.uri, android.util.Size(800, 800), null)
+        val maxSide = if (highResAlbumArt) 1200 else 500
+
+        fun embedded(): Bitmap? {
+            if (track.isStream) return null
+            val retriever = MediaMetadataRetriever()
+            return try {
+                if (track.uri != null) retriever.setDataSource(context, track.uri) else retriever.setDataSource(track.filePath)
+                retriever.embeddedPicture?.let { bytes ->
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                    var sample = 1
+                    while (bounds.outWidth / sample > maxSide) sample *= 2
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+                }
             } catch (_: Exception) {
+                null
+            } finally {
+                try { retriever.release() } catch (_: Exception) {}
             }
         }
-        if (bmp == null && track.filePath.isNotBlank()) {
-            try {
-                val dir = File(track.filePath).parentFile
-                val cover = listOf("cover.jpg", "folder.jpg", "cover.png", "folder.png", "albumart.jpg", "front.jpg")
-                    .map { File(dir, it) }.firstOrNull { it.exists() }
-                if (cover != null) bmp = BitmapFactory.decodeFile(cover.absolutePath)
-            } catch (_: Exception) {
+
+        fun folderImage(): Bitmap? {
+            // MediaStore thumbnail: works with the audio permission only and also covers folder art (cover.jpg etc.)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && track.uri != null && !track.isStream) {
+                try {
+                    return context.contentResolver.loadThumbnail(track.uri, android.util.Size(maxSide, maxSide), null)
+                } catch (_: Exception) {
+                }
             }
+            if (track.filePath.isNotBlank()) {
+                try {
+                    val dir = File(track.filePath).parentFile
+                    val cover = listOf("cover.jpg", "folder.jpg", "cover.png", "folder.png", "albumart.jpg", "front.jpg")
+                        .map { File(dir, it) }.firstOrNull { it.exists() }
+                    if (cover != null) {
+                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeFile(cover.absolutePath, bounds)
+                        var sample = 1
+                        while (bounds.outWidth / sample > maxSide) sample *= 2
+                        return BitmapFactory.decodeFile(cover.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
+                    }
+                } catch (_: Exception) {
+                }
+            }
+            return null
         }
-        if (bmp != null) artCache.put(track.id, bmp) else noArtIds.add(track.id)
+
+        var bmp: Bitmap? = if (preferEmbeddedArt) embedded() ?: folderImage() else folderImage() ?: embedded()
+        var downloaded = false
+        if (bmp == null && autoDownloadAlbumArt && !track.isStream) {
+            bmp = AlbumArtFetcher.fetch(context, track.albumArtist.ifBlank { track.artist }, track.album, highResAlbumArt)
+            downloaded = bmp != null
+        }
+        if (bmp != null) artCache.put(track.id, bmp)
+        else if (!autoDownloadAlbumArt) noArtIds.add(track.id) // with downloads on, a later visit may succeed when online
+        if (downloaded) withContext(Dispatchers.Main) { playbackEpoch++ } // notification and widget pick up the cover
         bmp
     }
 
     private fun probeAndAnalyse(track: AudioTrack) {
+        if (track.isStream) return
         scope.launch {
             // 1. Real audio properties (bitrate / sample rate)
             val props = withContext(Dispatchers.IO) { probeAudioProperties(track) }
@@ -650,7 +1098,8 @@ class PowerampController(private val context: Context) {
                 }
             }
             // 2. Real waveform for the waveseek bar (decoded once, then cached on disk)
-            val bars = withContext(Dispatchers.IO) { loadOrComputeWaveform(track) }
+            // A CUE track is a slice of a bigger file and DSD has no Android decoder: keep the neutral bar
+            val bars = if (track.isCue || track.isDsd) null else withContext(Dispatchers.IO) { loadOrComputeWaveform(track) }
             if (bars != null) {
                 val idx = allTracks.indexOfFirst { it.id == track.id }
                 if (idx >= 0) allTracks[idx] = allTracks[idx].copy(waveformBars = bars)
@@ -659,6 +1108,10 @@ class PowerampController(private val context: Context) {
     }
 
     private fun probeAudioProperties(track: AudioTrack): Pair<Int?, Int?>? {
+        if (track.isDsd) {
+            val d = DsdSource.open(context, track.uri, track.filePath) ?: return null
+            return try { Pair(d.dsdRate / 1000 * 2, d.dsdRate) } finally { d.release() }
+        }
         val r = MediaMetadataRetriever()
         return try {
             if (track.uri != null) r.setDataSource(context, track.uri) else r.setDataSource(track.filePath)
@@ -843,8 +1296,66 @@ class PowerampController(private val context: Context) {
         override fun onReceive(c: Context?, intent: Intent?) {
             if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY && pauseOnHeadsetDisconnect && isPlaying) {
                 pause()
+                pausedByHeadsetDisconnect = true
                 showToast("Paused", "Headset disconnected")
             }
+        }
+    }
+
+    // ----- Headset (re)connection: resume, and re-evaluate DVC / bit-perfect for the new route -----
+    private var pausedByHeadsetDisconnect = false
+    private var deviceCallbackArmed = false
+    private val headsetTypes = setOf(
+        AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+        AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_BLE_HEADSET
+    )
+    private val routeCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+            if (!deviceCallbackArmed) return
+            updateDvc()
+            val headset = addedDevices?.any { it.isSink && it.type in headsetTypes } == true
+            if (headset && resumeOnHeadsetConnect && pausedByHeadsetDisconnect && !isPlaying) {
+                pausedByHeadsetDisconnect = false
+                // Bluetooth profiles connect in stages; give the route a moment before starting
+                uiHandler.postDelayed({
+                    if (!isPlaying) {
+                        play()
+                        showToast("Resumed", "Headset connected")
+                    }
+                }, 1200L)
+            }
+        }
+
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+            if (deviceCallbackArmed) updateDvc()
+        }
+    }
+
+    private fun registerRouteCallback() {
+        try { audioManager.registerAudioDeviceCallback(routeCallback, uiHandler) } catch (_: Exception) {}
+        // The first callback lists devices that were already connected; ignore it
+        uiHandler.postDelayed({ deviceCallbackArmed = true }, 1500L)
+    }
+
+    // ----- Scrobbling through Simple Last.fm Scrobbler's broadcast API (no Last.fm keys in this app) -----
+    private fun scrobble(state: Int) {
+        if (!scrobblingEnabled) return
+        val t = currentTrack ?: return
+        try {
+            val i = Intent("com.adam.aslfms.notify.playstatechanged")
+                .setPackage("com.adam.aslfms")
+                .putExtra("state", state)
+                .putExtra("app-name", "MusicAmp")
+                .putExtra("app-package", context.packageName)
+                .putExtra("artist", t.artist)
+                .putExtra("album", t.album)
+                .putExtra("albumartist", t.albumArtist)
+                .putExtra("track", t.title)
+                .putExtra("duration", (durationMs / 1000L).toInt())
+                .putExtra("source", if (currentStream != null) "R" else "P")
+            if (t.trackNumber > 0) i.putExtra("track-number", t.trackNumber)
+            context.sendBroadcast(i)
+        } catch (_: Exception) {
         }
     }
 
@@ -867,39 +1378,98 @@ class PowerampController(private val context: Context) {
     // ==========================================================================================
     // Player creation / track loading
     // ==========================================================================================
-    private fun configurePlayer(mp: MediaPlayer, track: AudioTrack): Boolean {
-        return try {
-            mp.setAudioSessionId(fxSessionId)
-            mp.setAudioAttributes(focusAttributes)
-            mp.setWakeMode(context, PowerManager.PARTIAL_WAKE_LOCK)
-            when {
-                track.uri != null -> mp.setDataSource(context, track.uri)
-                track.filePath.isNotBlank() && File(track.filePath).exists() -> mp.setDataSource(track.filePath)
-                else -> return false
+    /** ReplayGain and other tag data, read once per track. */
+    private val tagCache = HashMap<Long, TagInfo>()
+
+    private fun tagsFor(track: AudioTrack): TagInfo? {
+        if (track.isStream) return null
+        synchronized(tagCache) { tagCache[track.id]?.let { return it } }
+        val info = TagReader.read(context, track) ?: TagInfo()
+        synchronized(tagCache) { tagCache[track.id] = info }
+        return info
+    }
+
+    /** ReplayGain to apply to [track] in dB (mode + preamp, clipped by the stored peak unless the limiter is on). */
+    private fun replayGainDbFor(track: AudioTrack): Float {
+        if (replayGainMode == "Off" || track.isStream) return 0f
+        val tags = tagsFor(track) ?: return 0f
+        val album = replayGainMode == "Album Gain"
+        val gain = (if (album) tags.albumGainDb ?: tags.trackGainDb else tags.trackGainDb ?: tags.albumGainDb) ?: return 0f
+        var g = gain + replayGainPreampDb
+        val peak = if (album) tags.albumPeak ?: tags.trackPeak else tags.trackPeak ?: tags.albumPeak
+        if (!limitEnabled && peak != null && peak > 0f) g = minOf(g, -20f * kotlin.math.log10(peak))
+        return g
+    }
+
+    /** Re-reads ReplayGain for the loaded players after the mode or preamp changed. */
+    fun applyReplayGain() {
+        val cur = currentTrack
+        val mp = mediaPlayer
+        if (cur != null && mp != null && currentStream == null) {
+            scope.launch {
+                val g = withContext(Dispatchers.IO) { replayGainDbFor(cur) }
+                if (mediaPlayer === mp) { mp.trackGainDb = g; pushVolumes() }
             }
-            true
-        } catch (_: Exception) {
-            false
         }
+        preloadNext()
     }
 
-    private fun createPreparedPlayer(track: AudioTrack): MediaPlayer? {
-        val mp = MediaPlayer()
-        if (!configurePlayer(mp, track)) {
-            mp.release(); return null
+    /** Decides the output format for a native-engine track once its decoded rate is known. */
+    private fun planOutput(sourceRate: Int, dsdRate: Int?): OutputPlan {
+        val bufferMs = when {
+            audioBufferSize.startsWith("Small") -> 25
+            audioBufferSize.startsWith("Large") -> 100
+            audioBufferSize.startsWith("Huge") -> 200
+            else -> 50
         }
-        return try {
-            mp.prepare()
-            mp
-        } catch (_: Exception) {
-            try { mp.release() } catch (_: Exception) {}
-            null
+        if (bitPerfectEnabled) {
+            val bp = bitPerfectOutput()
+            if (dsdRate != null) {
+                val dopRate = dsdRate / 16
+                if (bp.supportsDeepFormatAt(dopRate) && bp.engage(dopRate, preferHighRes = true)) {
+                    return OutputPlan(bp.activeEncoding, bitPerfect = true, dop = true, bufferMs = bufferMs)
+                }
+            }
+            if (bp.engage(sourceRate, preferHighRes = true)) {
+                return OutputPlan(bp.activeEncoding, bitPerfect = true, bufferMs = bufferMs)
+            }
         }
+        val enc = if (hiResAudioEnabled) AudioFormat.ENCODING_PCM_FLOAT else AudioFormat.ENCODING_PCM_16BIT
+        return OutputPlan(enc, bitPerfect = false, bufferMs = bufferMs)
     }
 
-    private fun releasePlayerQuietly(mp: MediaPlayer?) {
+    private fun newEngine(track: AudioTrack, native: Boolean): PlayerEngine =
+        if (native) {
+            NativeEngine(
+                context, fxSessionId, focusAttributes, track.uri, track.filePath, track.formatExt,
+                track.cueStartMs, track.cueEndMs
+            ) { rate, dsd -> planOutput(rate, dsd) }
+        } else {
+            MediaPlayerEngine(context, fxSessionId, focusAttributes, track.uri, track.filePath, track.cueStartMs, track.cueEndMs)
+        }
+
+    /** Native engine where possible (DSD needs it), MediaPlayer for streams or when the native engine fails. */
+    private fun wantsNative(track: AudioTrack) = !track.isStream && (useNativeEngine || track.isDsd)
+
+    private fun createPreparedPlayer(track: AudioTrack): PlayerEngine? {
+        val order = if (wantsNative(track)) listOf(true, false) else listOf(false)
+        for (native in order) {
+            if (!native && track.isDsd) break // MediaPlayer cannot decode DSD
+            val e = try { newEngine(track, native) } catch (_: Exception) { null } ?: continue
+            try {
+                e.prepare()
+                e.trackGainDb = replayGainDbFor(track)
+                return e
+            } catch (_: Exception) {
+                try { e.release() } catch (_: Exception) {}
+            }
+        }
+        return null
+    }
+
+    private fun releasePlayerQuietly(mp: PlayerEngine?) {
         if (mp == null) return
-        try { mp.setOnCompletionListener(null); mp.setOnErrorListener(null) } catch (_: Exception) {}
+        mp.onCompletion = null; mp.onError = null; mp.onPrepared = null
         try { mp.stop() } catch (_: Exception) {}
         try { mp.release() } catch (_: Exception) {}
     }
@@ -916,29 +1486,35 @@ class PowerampController(private val context: Context) {
         discardNextPlayer()
         if (repeatMode == RepeatMode.REPEAT_SONG || repeatMode == RepeatMode.SINGLE_SONG) return
         if (!gaplessEnabled && !crossfadeEnabled) return
+        // Bit-perfect re-tunes the DAC per track, which must not happen while the current track still plays
+        if (bitPerfectEnabled || currentStream != null) return
         val plan = planNext(wrap = false) ?: return
         val t = allTracks.firstOrNull { it.id == plan.trackId } ?: return
-        val mp = MediaPlayer()
-        if (!configurePlayer(mp, t)) {
-            mp.release(); return
-        }
-        mp.setOnPreparedListener { if (nextPlayer === it) nextPrepared = true }
-        mp.setOnErrorListener { p, _, _ ->
-            if (nextPlayer === p) discardNextPlayer()
-            true
-        }
+        val mp = try { newEngine(t, wantsNative(t)) } catch (_: Exception) { return }
+        mp.onPrepared = { if (nextPlayer === it) nextPrepared = true }
+        mp.onError = { p -> if (nextPlayer === p) discardNextPlayer() }
         nextPlayer = mp
         nextPlayerTrackId = t.id
-        try { mp.prepareAsync() } catch (_: Exception) { discardNextPlayer() }
+        try { mp.prepareAsync() } catch (_: Exception) { discardNextPlayer(); return }
+        scope.launch {
+            val g = withContext(Dispatchers.IO) { replayGainDbFor(t) }
+            if (nextPlayer === mp) mp.trackGainDb = g
+        }
     }
 
     private fun loadAndStart(index: Int, autoPlay: Boolean, positionMs: Long = 0L, crossfade: Boolean = false) {
         val track = allTracks.getOrNull(index) ?: return
+        if (currentStream != null) {
+            currentStream = null
+            streamTrack = null
+        }
         currentTrackIndex = index
         val old = mediaPlayer
         mediaPlayer = null
+        // Bit-perfect: the previous track must let go of the DAC before the next one re-tunes it
+        if (bitPerfectEnabled && old != null) releasePlayerQuietly(old)
 
-        var mp: MediaPlayer? = null
+        var mp: PlayerEngine? = null
         if (nextPlayer != null && nextPlayerTrackId == track.id && nextPrepared) {
             mp = nextPlayer
             nextPlayer = null; nextPlayerTrackId = -1L; nextPrepared = false
@@ -953,26 +1529,29 @@ class PowerampController(private val context: Context) {
             isPlaying = false
             durationMs = track.durationMs
             currentPositionMs = 0L
+            nativeEngineActive = false
+            engineStatus = "Can't open ${track.fileName}"
             showToast("Can't play this file", track.title)
             onTrackChanged(track)
             return
         }
 
-        mp.setOnCompletionListener { p -> if (p === mediaPlayer) onTrackCompleted() }
-        mp.setOnErrorListener { p, _, _ ->
-            if (p === mediaPlayer) {
-                isPlaying = false
-                showToast("Playback error", currentTrack?.title)
-            }
-            true
-        }
-        mediaPlayer = mp
+        attachCurrent(mp)
         durationMs = mp.duration.takeIf { it > 0 }?.toLong() ?: track.durationMs
         currentPositionMs = positionMs.coerceIn(0L, durationMs)
         rawPosMs = currentPositionMs
         rawPosAt = SystemClock.uptimeMillis()
         if (positionMs > 0L) try { mp.seekTo(positionMs.toInt()) } catch (_: Exception) {}
 
+        if (mp.isNative) {
+            // The engine already chose its output; mirror the DAC state for the UI
+            syncBitPerfectState()
+        } else if (bitPerfectEnabled) {
+            updateBitPerfect(mp.sampleRate ?: track.sampleRateHz)
+        }
+        onEngineChanged()
+
+        val previousWasPlaying = old != null && try { old.isPlaying } catch (_: Exception) { false }
         if (autoPlay) {
             if (!requestAudioFocus()) {
                 releasePlayerQuietly(old)
@@ -981,7 +1560,8 @@ class PowerampController(private val context: Context) {
                 onTrackChanged(track)
                 return
             }
-            val fading = crossfade && old != null && try { old.isPlaying } catch (_: Exception) { false }
+            // Crossfading mixes two streams, which bit-perfect output cannot do
+            val fading = crossfade && !bitPerfectActive && previousWasPlaying
             if (fading) {
                 fadeInGain = 0f
                 pushVolumes()
@@ -1006,6 +1586,99 @@ class PowerampController(private val context: Context) {
             isPlaying = false
         }
         onTrackChanged(track)
+        if (autoPlay) scrobble(SCROBBLE_START)
+    }
+
+    /** Makes [mp] the current player and routes its callbacks. */
+    private fun attachCurrent(mp: PlayerEngine) {
+        mp.onCompletion = { p -> if (p === mediaPlayer) onTrackCompleted() }
+        mp.onError = { p ->
+            if (p === mediaPlayer) {
+                isPlaying = false
+                showToast("Playback error", currentTrack?.title)
+            }
+        }
+        mediaPlayer = mp
+    }
+
+    /** Re-applies effects for the engine type now playing and refreshes the status line. */
+    private fun onEngineChanged() {
+        val mp = mediaPlayer
+        nativeEngineActive = mp?.isNative == true
+        engineStatus = mp?.description ?: "Idle"
+        applyAllEffectsNow()
+        updateDvc()
+    }
+
+    private fun syncBitPerfectState() {
+        val out = bitPerfectOut
+        if (bitPerfectEnabled && out != null) {
+            bitPerfectActive = out.state == BitPerfectOutput.State.ACTIVE
+            bitPerfectStatus = out.statusText
+        } else if (bitPerfectEnabled) {
+            bitPerfectActive = false
+            bitPerfectStatus = "Waiting for a USB DAC"
+        } else {
+            bitPerfectActive = false
+            bitPerfectStatus = "Off"
+        }
+    }
+
+    // ----- Internet radio streams (always through MediaPlayer, which handles buffering and ICY) -----
+    /** Synthetic track describing the playing stream, so the player UI, notification and widget keep working. */
+    private var streamTrack by mutableStateOf<AudioTrack?>(null)
+
+    private fun startStreamPlayback(stream: StreamItem) {
+        val uri = Uri.parse(stream.url)
+        val t = AudioTrack(
+            id = -1_000_000L - stream.id.mod(1_000_000L), title = stream.title, artist = stream.genre,
+            album = "Radio", durationMs = 0L, uri = uri, filePath = "", formatExt = "stream",
+            waveformBars = NEUTRAL_WAVEFORM
+        )
+        cancelFade()
+        discardNextPlayer()
+        releasePlayerQuietly(mediaPlayer)
+        mediaPlayer = null
+        currentStream = stream
+        streamTrack = t
+        if (bitPerfectEnabled) { bitPerfectOut?.release(); syncBitPerfectState() }
+        val mp = MediaPlayerEngine(context, fxSessionId, focusAttributes, uri, "")
+        attachCurrent(mp)
+        mp.onCompletion = { p -> if (p === mediaPlayer) { isPlaying = false; showToast("Stream ended", stream.title) } }
+        mp.onError = { p ->
+            if (p === mediaPlayer) {
+                isPlaying = false
+                engineStatus = "Stream error"
+                showToast("Can't play stream", stream.title)
+            }
+        }
+        mp.onPrepared = { p ->
+            if (p === mediaPlayer && currentStream?.id == stream.id) {
+                if (requestAudioFocus()) {
+                    fadeInGain = 1f
+                    pushVolumes()
+                    p.start()
+                    isPlaying = true
+                    setNoisyReceiver(true)
+                    onEngineChanged()
+                    engineStatus = "Internet stream · Android MediaPlayer"
+                    PlaybackService.ensureStarted(context)
+                    scrobble(SCROBBLE_START)
+                }
+                playbackEpoch++
+            }
+        }
+        durationMs = 0L
+        currentPositionMs = 0L
+        isPlaying = false
+        engineStatus = "Connecting to ${uri.host ?: "stream"}…"
+        playbackEpoch++
+        try {
+            mp.prepareAsync()
+            showToast("Connecting", stream.title)
+        } catch (_: Exception) {
+            showToast("Can't play stream", stream.title)
+        }
     }
 
     private fun onTrackChanged(track: AudioTrack) {
@@ -1103,6 +1776,27 @@ class PowerampController(private val context: Context) {
     }
 
     private fun applyAllEffectsNow() {
+        if (bitPerfectActive) {
+            // Bit-perfect: every DSP stage and software gain is bypassed so samples reach the DAC untouched
+            for (fx in listOf(equalizerFx, loudnessFx, virtualizerFx, presetReverbFx)) {
+                try { fx?.enabled = false } catch (_: Exception) {}
+            }
+            pushVolumes()
+            applyTempoNow()
+            applyDeviceVolume()
+            return
+        }
+        DspHolder.config = buildDspConfig()
+        if (mediaPlayer?.isNative == true) {
+            // The native engine runs its own DSP chain; the session-wide Android effects would double it up
+            for (fx in listOf(equalizerFx, loudnessFx, virtualizerFx, presetReverbFx)) {
+                try { fx?.enabled = false } catch (_: Exception) {}
+            }
+            pushVolumes()
+            applyTempoNow()
+            applyDeviceVolume()
+            return
+        }
         // --- Equalizer (hardware bands, interpolated from the 10-band UI) ---
         try {
             val eq = equalizerFx
@@ -1160,10 +1854,68 @@ class PowerampController(private val context: Context) {
         applyDeviceVolume()
     }
 
+    private fun buildDspConfig() = DspConfig(
+        bypass = bitPerfectActive,
+        preampDb = if (eqEnabled) preampDb else 0f,
+        graphicEnabled = eqEnabled && !parametricEqEnabled,
+        graphicGainsDb = bandGainsDb.toList(),
+        parametricEnabled = eqEnabled && parametricEqEnabled,
+        parametricBands = parametricBands.toList(),
+        bassDb = if (toneEnabled) bassPercent / 100f * 12f else 0f,
+        trebleDb = if (toneEnabled) treblePercent / 100f * 12f else 0f,
+        limiter = limitEnabled,
+        mono = monoEnabled,
+        stereoWidth = 1f + stereoExpandPercent / 100f,
+        reverb = if (reverbEnabled && reverbMix > 0.02f) {
+            ReverbParams(reverbSize, reverbDamp, reverbFilter, reverbFade, reverbPreDelay, reverbPreDelayMix, reverbMix)
+        } else null
+    )
+
+    // ----- Direct Volume Control -----
+    private fun outputIsBluetooth(): Boolean = try {
+        val bt = setOf(
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+            AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLE_SPEAKER, AudioDeviceInfo.TYPE_BLE_BROADCAST
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            audioManager.getAudioDevicesForAttributes(focusAttributes).any { it.type in bt }
+        } else {
+            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP }
+        }
+    } catch (_: Exception) {
+        false
+    }
+
+    /**
+     * Turns DVC on or off for the current output. Order matters for hearing safety: when switching on, the
+     * software gain drops first and only then the system volume goes to max; when switching off, the system
+     * volume comes down first and only then the software gain returns to unity.
+     */
+    fun updateDvc() {
+        val want = dvcEnabled && !bitPerfectActive && (!outputIsBluetooth() || bluetoothDvcEnabled)
+        if (want == dvcActive) {
+            pushVolumes()
+            applyDeviceVolume()
+            return
+        }
+        dvcActive = want
+        if (want) {
+            pushVolumes()
+            applyDeviceVolume()
+        } else {
+            applyDeviceVolume()
+            pushVolumes()
+        }
+    }
+
+    /** Software volume while DVC is active: a power curve so the knob feels even (50% ≈ -15 dB). */
+    private fun dvcGain(): Float = if (!dvcActive) 1f else (volumePercent / 100f).coerceIn(0f, 1f).pow(2.5f)
+
     private fun applyDeviceVolume() {
         try {
             val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
-            val target = ((volumePercent / 100f) * maxVol).let { kotlin.math.round(it).toInt() }.coerceIn(0, maxVol)
+            val target = if (dvcActive) maxVol
+                else ((volumePercent / 100f) * maxVol).let { kotlin.math.round(it).toInt() }.coerceIn(0, maxVol)
             if (target != lastStreamVolumeSet) {
                 lastVolumeApplyAt = SystemClock.uptimeMillis()
                 lastStreamVolumeSet = target
@@ -1174,10 +1926,15 @@ class PowerampController(private val context: Context) {
     }
 
     private fun baseGains(): Pair<Float, Float> {
-        // Negative preamp attenuates; when the limiter is on, boosted EQ bands also get automatic headroom
-        var db = if (eqEnabled) preampDb.coerceAtMost(0f) else 0f
-        if (limitEnabled) db -= (maxBoostDb() + (if (eqEnabled) preampDb.coerceAtLeast(0f) else 0f)).coerceAtLeast(0f)
-        val scale = 10.0.pow(db.toDouble() / 20.0).toFloat().coerceIn(0.05f, 1f) * duckGain
+        if (bitPerfectActive) return Pair(duckGain, duckGain) // unity gain; ducking only while another app speaks
+        var db = 0f
+        if (mediaPlayer?.isNative != true) {
+            // MediaPlayer path: negative preamp attenuates; with the limiter on, boosted EQ bands get headroom.
+            // (The native engine applies preamp and limiting inside its own DSP.)
+            db = if (eqEnabled) preampDb.coerceAtMost(0f) else 0f
+            if (limitEnabled) db -= (maxBoostDb() + (if (eqEnabled) preampDb.coerceAtLeast(0f) else 0f)).coerceAtLeast(0f)
+        }
+        val scale = 10.0.pow(db.toDouble() / 20.0).toFloat().coerceIn(0.05f, 1f) * duckGain * dvcGain()
         val l = if (balanceValue > 0f) (1f - balanceValue).coerceIn(0f, 1f) else 1f
         val r = if (balanceValue < 0f) (1f + balanceValue).coerceIn(0f, 1f) else 1f
         return Pair(scale * l, scale * r)
@@ -1192,11 +1949,11 @@ class PowerampController(private val context: Context) {
     }
 
     private fun applyTempoNow() {
-        val speed = if (tempoEnabled) tempoMultiplier.coerceIn(0.5f, 3.0f) else 1.0f
+        val speed = if (tempoEnabled && !bitPerfectActive) tempoMultiplier.coerceIn(0.5f, 3.0f) else 1.0f
         playbackSpeed = speed
         for (mp in listOf(mediaPlayer, fadingOutPlayer)) {
             try {
-                if (mp != null && mp.isPlaying) mp.playbackParams = PlaybackParams().setSpeed(speed).setPitch(1.0f)
+                if (mp != null && mp.isPlaying) mp.setSpeed(speed)
             } catch (_: Exception) {
             }
         }
@@ -1247,7 +2004,7 @@ class PowerampController(private val context: Context) {
     }
 
     private fun checkCrossfadeTrigger() {
-        if (!crossfadeEnabled || crossfadeDurationSec < 0.3f || fadingOutPlayer != null || stopAfterCurrentTrack) return
+        if (!crossfadeEnabled || bitPerfectActive || crossfadeDurationSec < 0.3f || fadingOutPlayer != null || stopAfterCurrentTrack) return
         if (repeatMode == RepeatMode.REPEAT_SONG || repeatMode == RepeatMode.SINGLE_SONG) return
         val fadeMs = (crossfadeDurationSec * 1000f).toLong()
         if (durationMs < fadeMs * 2 + 1000L) return
@@ -1362,7 +2119,10 @@ class PowerampController(private val context: Context) {
     }
 
     fun play() {
-        if (allTracks.isEmpty()) return
+        pausedByHeadsetDisconnect = false
+        val stream = currentStream
+        if (stream != null && mediaPlayer == null) { startStreamPlayback(stream); return }
+        if (allTracks.isEmpty() && stream == null) return
         val mp = mediaPlayer
         if (mp == null) {
             loadAndStart(currentTrackIndex, autoPlay = true)
@@ -1382,6 +2142,7 @@ class PowerampController(private val context: Context) {
             currentTrack?.let { incrementPlayCount(it.id) }
             PlaybackService.ensureStarted(context)
             playbackEpoch++
+            scrobble(SCROBBLE_RESUME)
         } catch (_: Exception) {
             loadAndStart(currentTrackIndex, autoPlay = true, positionMs = currentPositionMs)
         }
@@ -1398,6 +2159,7 @@ class PowerampController(private val context: Context) {
         setNoisyReceiver(false)
         if (abandonFocus) abandonAudioFocus()
         savePosition()
+        scrobble(SCROBBLE_PAUSE)
         playbackEpoch++
     }
 
@@ -1482,6 +2244,7 @@ class PowerampController(private val context: Context) {
         dvcEnabled = true
         hiResAudioEnabled = true
         audioBufferSize = "Normal (50ms)"
+        setBitPerfect(false)
         pauseOnHeadsetDisconnect = true
         resumeOnHeadsetConnect = true
         visFadedControlsOpacity = 0.40f
@@ -1492,7 +2255,7 @@ class PowerampController(private val context: Context) {
         backgroundBlurRadius = 0.65f
         backgroundSaturation = 1.0f
         backgroundDimOpacity = 0.35f
-        autoDownloadAlbumArt = true
+        autoDownloadAlbumArt = false
         highResAlbumArt = true
         preferEmbeddedArt = true
         albumArtOnLockscreen = true
@@ -1632,6 +2395,7 @@ class PowerampController(private val context: Context) {
     }
 
     private fun onTrackCompleted() {
+        scrobble(SCROBBLE_COMPLETE)
         if (stopAfterCurrentTrack) {
             stopAfterCurrentTrack = false
             pause()
@@ -1688,12 +2452,12 @@ class PowerampController(private val context: Context) {
 
     fun nextVisPreset() {
         currentVisPresetIndex = (currentVisPresetIndex + 1) % visPresets.size
-        showToast("Preset: ${currentVisPreset.name}")
+        if (visShowPresetToast) showToast("Preset: ${currentVisPreset.name}")
     }
 
     fun prevVisPreset() {
         currentVisPresetIndex = if (currentVisPresetIndex - 1 < 0) visPresets.lastIndex else currentVisPresetIndex - 1
-        showToast("Preset: ${currentVisPreset.name}")
+        if (visShowPresetToast) showToast("Preset: ${currentVisPreset.name}")
     }
 
     fun cycleVisPresetMode() {
@@ -1870,6 +2634,8 @@ class PowerampController(private val context: Context) {
     // Equalizer Preset Application
     fun applyEqPreset(preset: EqPreset) {
         selectedPresetName = preset.name
+        // A graphic preset switches back to graphic mode; the "Parametric" entry switches to the band editor
+        parametricEqEnabled = preset.isParametric
         preampDb = preset.preamp
         for (i in 0 until minOf(bandGainsDb.size, preset.bands.size)) {
             bandGainsDb[i] = preset.bands[i]
@@ -1990,12 +2756,22 @@ class PowerampController(private val context: Context) {
         o.put("gaplessEnabled", gaplessEnabled); o.put("replayGainMode", replayGainMode)
         o.put("replayGainPreampDb", replayGainPreampDb.toDouble()); o.put("dvcEnabled", dvcEnabled)
         o.put("hiResAudioEnabled", hiResAudioEnabled); o.put("audioBufferSize", audioBufferSize)
+        o.put("bitPerfectEnabled", bitPerfectEnabled)
+        o.put("extraFolders", JSONArray(extraFolders.toList()))
+        o.put("useNativeEngine", useNativeEngine); o.put("parametricEqEnabled", parametricEqEnabled)
+        o.put("parametricProfileName", parametricProfileName)
+        o.put("parametricBands", JSONArray().also { arr ->
+            parametricBands.forEach { b ->
+                arr.put(JSONObject().put("type", b.type.name).put("f", b.freqHz.toDouble()).put("g", b.gainDb.toDouble())
+                    .put("q", b.q.toDouble()).put("on", b.enabled))
+            }
+        })
         o.put("pauseOnHeadsetDisconnect", pauseOnHeadsetDisconnect); o.put("resumeOnHeadsetConnect", resumeOnHeadsetConnect)
         o.put("visFadedControlsOpacity", visFadedControlsOpacity.toDouble()); o.put("visPresetDurationSec", visPresetDurationSec)
         o.put("visFpsTarget", visFpsTarget); o.put("visShowPresetToast", visShowPresetToast)
         o.put("backgroundType", backgroundType); o.put("backgroundBlurRadius", backgroundBlurRadius.toDouble())
         o.put("backgroundSaturation", backgroundSaturation.toDouble()); o.put("backgroundDimOpacity", backgroundDimOpacity.toDouble())
-        o.put("autoDownloadAlbumArt", autoDownloadAlbumArt); o.put("highResAlbumArt", highResAlbumArt)
+        o.put("autoDownloadAlbumArtNet", autoDownloadAlbumArt); o.put("highResAlbumArt", highResAlbumArt)
         o.put("preferEmbeddedArt", preferEmbeddedArt); o.put("albumArtOnLockscreen", albumArtOnLockscreen)
         o.put("autoScanOnStartup", autoScanOnStartup); o.put("ignoreShortTracks", ignoreShortTracks)
         o.put("folders", JSONArray().also { a -> selectedMusicFolders.forEach { a.put(it) } })
@@ -2109,6 +2885,22 @@ class PowerampController(private val context: Context) {
             dvcEnabled = o.optBoolean("dvcEnabled", dvcEnabled)
             hiResAudioEnabled = o.optBoolean("hiResAudioEnabled", hiResAudioEnabled)
             audioBufferSize = o.optString("audioBufferSize", audioBufferSize)
+            bitPerfectEnabled = o.optBoolean("bitPerfectEnabled", bitPerfectEnabled)
+            o.optJSONArray("extraFolders")?.let { arr -> extraFolders.clear(); for (i in 0 until arr.length()) arr.optString(i).takeIf { it.isNotBlank() }?.let { extraFolders.add(it) } }
+            useNativeEngine = o.optBoolean("useNativeEngine", useNativeEngine)
+            parametricEqEnabled = o.optBoolean("parametricEqEnabled", parametricEqEnabled)
+            parametricProfileName = o.optString("parametricProfileName", parametricProfileName)
+            o.optJSONArray("parametricBands")?.let { arr ->
+                parametricBands.clear()
+                for (i in 0 until arr.length()) {
+                    val b = arr.optJSONObject(i) ?: continue
+                    val type = try { FilterType.valueOf(b.optString("type", "PEAK")) } catch (_: Exception) { FilterType.PEAK }
+                    parametricBands.add(
+                        ParametricBand(type, b.optDouble("f", 1000.0).toFloat(), b.optDouble("g", 0.0).toFloat(),
+                            b.optDouble("q", 0.71).toFloat(), b.optBoolean("on", true))
+                    )
+                }
+            }
             pauseOnHeadsetDisconnect = o.optBoolean("pauseOnHeadsetDisconnect", pauseOnHeadsetDisconnect)
             resumeOnHeadsetConnect = o.optBoolean("resumeOnHeadsetConnect", resumeOnHeadsetConnect)
             visFadedControlsOpacity = f("visFadedControlsOpacity", visFadedControlsOpacity)
@@ -2119,7 +2911,7 @@ class PowerampController(private val context: Context) {
             backgroundBlurRadius = f("backgroundBlurRadius", backgroundBlurRadius)
             backgroundSaturation = f("backgroundSaturation", backgroundSaturation)
             backgroundDimOpacity = f("backgroundDimOpacity", backgroundDimOpacity)
-            autoDownloadAlbumArt = o.optBoolean("autoDownloadAlbumArt", autoDownloadAlbumArt)
+            autoDownloadAlbumArt = o.optBoolean("autoDownloadAlbumArtNet", autoDownloadAlbumArt)
             highResAlbumArt = o.optBoolean("highResAlbumArt", highResAlbumArt)
             preferEmbeddedArt = o.optBoolean("preferEmbeddedArt", preferEmbeddedArt)
             albumArtOnLockscreen = o.optBoolean("albumArtOnLockscreen", albumArtOnLockscreen)
@@ -2213,6 +3005,29 @@ class PowerampController(private val context: Context) {
         setNoisyReceiver(false)
         abandonAudioFocus()
         releaseVisualizer()
+        bitPerfectOut?.dispose()
+        bitPerfectOut = null
+        bitPerfectActive = false
+    }
+
+    /** Reacts to audio settings changed from the Settings screen (they are plain state the UI writes to). */
+    @OptIn(FlowPreview::class)
+    private fun startSettingWatchers() {
+        scope.launch {
+            snapshotFlow { Triple(replayGainMode, replayGainPreampDb, limitEnabled) }.drop(1).debounce(250L)
+                .collect { applyReplayGain() }
+        }
+        scope.launch {
+            snapshotFlow { dvcEnabled to bluetoothDvcEnabled }.drop(1).collect { updateDvc() }
+        }
+        scope.launch {
+            // Output format / buffer changes need the AudioTrack reopened
+            snapshotFlow { hiResAudioEnabled to audioBufferSize }.drop(1).debounce(300L)
+                .collect { if (mediaPlayer?.isNative == true) reopenForOutputChange() }
+        }
+        scope.launch {
+            snapshotFlow { headsetButtonsEnabled }.drop(1).collect { playbackEpoch++ }
+        }
     }
 
     init {
@@ -2223,5 +3038,7 @@ class PowerampController(private val context: Context) {
         startProgressLoop()
         startStatePersistence()
         scanMediaLibrary()
+        registerRouteCallback()
+        startSettingWatchers()
     }
 }

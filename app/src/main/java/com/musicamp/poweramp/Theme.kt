@@ -1,11 +1,25 @@
 package com.musicamp.poweramp
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 
 /** Theme modes shown in Settings > Look and Feel. "Poweramp" is the default (black, charcoal, neon green). */
 val THEME_MODES = listOf("Poweramp", "Light", "Dark", "Black (OLED)", "Follow system")
@@ -41,6 +55,9 @@ object AppTheme {
 
     /** Pure black backgrounds (saves power on OLED panels). */
     val isOled: Boolean get() = mode == "Black (OLED)"
+
+    /** Settings > Look and Feel > Settings Font, one of [SETTINGS_FONTS]. Kept in sync with the controller by [LookAndFeelScope]. */
+    var font by mutableStateOf("Bold")
 
     internal fun accentShades(): Triple<Color, Color, Color> = ACCENT_COLORS[accent] ?: ACCENT_COLORS.getValue(POWERAMP_GREEN)
 }
@@ -128,3 +145,65 @@ val PowerampTextSecondary: Color
 
 /** Strong icon colour for transport controls: dark accent on light themes, near-white on dark themes. */
 val PowerampIconStrong: Color get() = if (AppTheme.isDark) PowerampTextPrimary else ThemeBerryDark
+
+// ---- Fonts ----
+/** Options for Settings > Look and Feel > Settings Font. "Bold" is the weight set written in the code. */
+val SETTINGS_FONTS = listOf("Default", "Alternative font", "Bold", "Bold+")
+
+/**
+ * A weight written in the UI code, adjusted for the chosen settings font:
+ * "Default" is one step lighter (never below Normal), "Bold+" one step heavier, "Bold" and "Alternative font" unchanged.
+ */
+val FontWeight.appWeight: FontWeight
+    get() = when (AppTheme.font) {
+        "Default" -> if (weight <= 400) this else FontWeight((weight - 100).coerceAtLeast(400))
+        "Bold+" -> FontWeight((weight + 100).coerceAtMost(900))
+        else -> this
+    }
+
+/** Font family for the chosen settings font: system serif for "Alternative font", the default sans otherwise. */
+val AppFontFamily: FontFamily
+    get() = if (AppTheme.font == "Alternative font") FontFamily.Serif else FontFamily.Default
+
+/** Provides the settings font (family and base weight) to every [androidx.compose.material3.Text] in [content]. */
+@Composable
+fun AppTextStyleScope(content: @Composable () -> Unit) {
+    val base = LocalTextStyle.current
+    val style = base.copy(
+        fontFamily = AppFontFamily,
+        fontWeight = (base.fontWeight ?: FontWeight.Normal).appWeight
+    )
+    CompositionLocalProvider(LocalTextStyle provides style, content = content)
+}
+
+/**
+ * Applies the Look and Feel settings that are not plain colours: the settings font and the status bar
+ * visibility. Wrap each top-level screen in it.
+ */
+@Composable
+fun LookAndFeelScope(controller: PowerampController, content: @Composable () -> Unit) {
+    val font = controller.settingsFont
+    SideEffect { if (AppTheme.font != font) AppTheme.font = font }
+
+    val view = LocalView.current
+    val showStatusBar = controller.showStatusBarOverlay
+    if (!view.isInEditMode) {
+        LaunchedEffect(showStatusBar) {
+            val window = view.context.findActivity()?.window ?: return@LaunchedEffect
+            val insets = WindowCompat.getInsetsController(window, view)
+            if (showStatusBar) {
+                insets.show(WindowInsetsCompat.Type.statusBars())
+            } else {
+                insets.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                insets.hide(WindowInsetsCompat.Type.statusBars())
+            }
+        }
+    }
+    AppTextStyleScope(content)
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}

@@ -30,6 +30,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.FileOpen
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Close
@@ -90,7 +92,7 @@ import androidx.compose.ui.unit.sp
  * 1. Main Menu Sheet (`05_main_menu.png`) anchored right above the bottom dock.
  */
 @Composable
-fun PowerampMainMenuOverlay(controller: PowerampController) {
+private fun PowerampMainMenuOverlayContent(controller: PowerampController) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -116,7 +118,7 @@ fun PowerampMainMenuOverlay(controller: PowerampController) {
                     text = "MUSICAMP",
                     color = ThemeBerryPrimary,
                     fontSize = 24.sp,
-                    fontWeight = FontWeight.Black,
+                    fontWeight = FontWeight.Black.appWeight,
                     fontStyle = FontStyle.Italic,
                     letterSpacing = 1.2.sp
                 )
@@ -125,7 +127,7 @@ fun PowerampMainMenuOverlay(controller: PowerampController) {
                     text = "Full Version",
                     color = PowerampTextSecondary,
                     fontSize = 13.5.sp,
-                    fontWeight = FontWeight.ExtraBold
+                    fontWeight = FontWeight.ExtraBold.appWeight
                 )
             }
 
@@ -210,7 +212,7 @@ private fun MainMenuRowItem(
             text = label,
             color = PowerampTextPrimary,
             fontSize = 17.sp,
-            fontWeight = FontWeight.ExtraBold
+            fontWeight = FontWeight.ExtraBold.appWeight
         )
     }
 }
@@ -219,7 +221,7 @@ private fun MainMenuRowItem(
  * 2. Track Context Menu Dialog (`11_player_menu.png`).
  */
 @Composable
-fun PowerampTrackMenuDialog(controller: PowerampController) {
+private fun PowerampTrackMenuDialogContent(controller: PowerampController) {
     val track = controller.actionTargetTrack ?: controller.currentTrack ?: return
     val isLiked = track.rating == 1
     val isUnliked = track.rating == -1
@@ -252,7 +254,7 @@ fun PowerampTrackMenuDialog(controller: PowerampController) {
                         text = track.title,
                         color = PowerampTextPrimary,
                         fontSize = 18.sp,
-                        fontWeight = FontWeight.ExtraBold,
+                        fontWeight = FontWeight.ExtraBold.appWeight,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -261,7 +263,7 @@ fun PowerampTrackMenuDialog(controller: PowerampController) {
                         text = track.artist,
                         color = PowerampTextSecondary,
                         fontSize = 13.5.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Bold.appWeight,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -270,7 +272,7 @@ fun PowerampTrackMenuDialog(controller: PowerampController) {
                         text = "𝄞 ${track.metaLine}",
                         color = Color(0xFF9094A0),
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold.appWeight
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -483,7 +485,7 @@ private fun TrackMenuActionButton(
             text = label,
             color = PowerampTextPrimary,
             fontSize = 16.sp,
-            fontWeight = FontWeight.ExtraBold,
+            fontWeight = FontWeight.ExtraBold.appWeight,
             maxLines = 1
         )
     }
@@ -493,7 +495,7 @@ private fun TrackMenuActionButton(
  * 3. Info / Tags Bottom Sheet (`12_info_tags.png`) + Interactive Tag Editor Dialog.
  */
 @Composable
-fun PowerampInfoTagsSheet(controller: PowerampController) {
+private fun PowerampInfoTagsSheetContent(controller: PowerampController) {
     val track = controller.actionTargetTrack ?: controller.currentTrack ?: return
     val minutesAgo = if (track.lastPlayedTimestamp > 0) {
         ((System.currentTimeMillis() - track.lastPlayedTimestamp) / 60_000L).coerceAtLeast(1L)
@@ -520,7 +522,7 @@ fun PowerampInfoTagsSheet(controller: PowerampController) {
                 text = "Info/Tags",
                 color = PowerampTextPrimary,
                 fontSize = 22.sp,
-                fontWeight = FontWeight.ExtraBold
+                fontWeight = FontWeight.ExtraBold.appWeight
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -537,7 +539,7 @@ fun PowerampInfoTagsSheet(controller: PowerampController) {
                             text = track.folderPath,
                             color = ThemeBerryPrimary,
                             fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.Bold.appWeight,
                             textDecoration = TextDecoration.Underline,
                             modifier = Modifier.clickable {
                                 controller.showInfoTagsSheet = false
@@ -549,7 +551,7 @@ fun PowerampInfoTagsSheet(controller: PowerampController) {
                             text = track.fileName,
                             color = PowerampTextPrimary,
                             fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold.appWeight
                         )
                     }
                 }
@@ -566,7 +568,7 @@ fun PowerampInfoTagsSheet(controller: PowerampController) {
                                 text = track.formatExt.lowercase(),
                                 color = ThemeBerryPrimary,
                                 fontSize = 11.sp,
-                                fontWeight = FontWeight.ExtraBold
+                                fontWeight = FontWeight.ExtraBold.appWeight
                             )
                         }
                         Spacer(modifier = Modifier.width(8.dp))
@@ -575,7 +577,7 @@ fun PowerampInfoTagsSheet(controller: PowerampController) {
                             text = "${track.formatExt.uppercase()}, $sec sec (${track.formattedDuration}), ${track.sampleRateHz} Hz, 16 bit, Stereo, ${track.bitrateKbps} kbps, ${track.fileSizeKb}kB",
                             color = PowerampTextSecondary,
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Medium.appWeight
                         )
                     }
                 }
@@ -587,12 +589,12 @@ fun PowerampInfoTagsSheet(controller: PowerampController) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("Played Times", color = PowerampTextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            Text("${track.playCount.coerceAtLeast(1)}", color = PowerampTextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                            Text("Played Times", color = PowerampTextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold.appWeight)
+                            Text("${track.playCount.coerceAtLeast(1)}", color = PowerampTextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold.appWeight)
                         }
                         Column {
-                            Text("Last Played", color = PowerampTextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            Text("$minutesAgo min. ago", color = PowerampTextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                            Text("Last Played", color = PowerampTextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold.appWeight)
+                            Text("$minutesAgo min. ago", color = PowerampTextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold.appWeight)
                         }
                         Icon(
                             imageVector = Icons.Filled.Close,
@@ -656,7 +658,7 @@ fun PowerampInfoTagsSheet(controller: PowerampController) {
                     text = "Search",
                     color = ThemeBerryPrimary,
                     fontSize = 15.sp,
-                    fontWeight = FontWeight.ExtraBold,
+                    fontWeight = FontWeight.ExtraBold.appWeight,
                     modifier = Modifier
                         .clip(RoundedCornerShape(18.dp))
                         .clickable {
@@ -685,7 +687,7 @@ fun PowerampInfoTagsSheet(controller: PowerampController) {
                         text = "Edit Tags",
                         color = Color.White,
                         fontSize = 15.sp,
-                        fontWeight = FontWeight.ExtraBold
+                        fontWeight = FontWeight.ExtraBold.appWeight
                     )
                 }
             }
@@ -696,10 +698,10 @@ fun PowerampInfoTagsSheet(controller: PowerampController) {
 @Composable
 private fun InfoTagField(label: String, value: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier.padding(vertical = 2.dp)) {
-        Text(text = label, color = PowerampTextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text(text = label, color = PowerampTextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Bold.appWeight)
         if (value.isNotBlank()) {
             Spacer(modifier = Modifier.height(2.dp))
-            Text(text = value, color = PowerampTextPrimary, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
+            Text(text = value, color = PowerampTextPrimary, fontSize = 14.5.sp, fontWeight = FontWeight.Bold.appWeight)
         }
     }
 }
@@ -708,7 +710,7 @@ private fun InfoTagField(label: String, value: String, modifier: Modifier = Modi
  * Edit Tags Modal Dialog allowing full editing of Title, Artist, Album, Genre, Year, and Lyrics.
  */
 @Composable
-fun PowerampEditTagsDialog(controller: PowerampController) {
+private fun PowerampEditTagsDialogContent(controller: PowerampController) {
     val track = controller.actionTargetTrack ?: controller.currentTrack ?: return
     var title by remember(track.id) { mutableStateOf(track.title) }
     var artist by remember(track.id) { mutableStateOf(track.artist) }
@@ -737,7 +739,7 @@ fun PowerampEditTagsDialog(controller: PowerampController) {
                 text = "Edit Tags",
                 color = PowerampTextPrimary,
                 fontSize = 20.sp,
-                fontWeight = FontWeight.ExtraBold
+                fontWeight = FontWeight.ExtraBold.appWeight
             )
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -760,7 +762,7 @@ fun PowerampEditTagsDialog(controller: PowerampController) {
                 horizontalArrangement = Arrangement.End
             ) {
                 TextButton(onClick = { controller.showEditTagsDialog = false }) {
-                    Text("Cancel", color = PowerampTextSecondary, fontWeight = FontWeight.Bold)
+                    Text("Cancel", color = PowerampTextSecondary, fontWeight = FontWeight.Bold.appWeight)
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Box(
@@ -785,7 +787,7 @@ fun PowerampEditTagsDialog(controller: PowerampController) {
                         .padding(horizontal = 20.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("Save", color = PowerampOnAccent, fontWeight = FontWeight.ExtraBold)
+                    Text("Save", color = PowerampOnAccent, fontWeight = FontWeight.ExtraBold.appWeight)
                 }
             }
         }
@@ -795,12 +797,12 @@ fun PowerampEditTagsDialog(controller: PowerampController) {
 @Composable
 private fun TagEditInput(label: String, value: String, onValueChange: (String) -> Unit) {
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
-        Text(text = label, color = PowerampTextSecondary, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+        Text(text = label, color = PowerampTextSecondary, fontSize = 11.5.sp, fontWeight = FontWeight.Bold.appWeight)
         Spacer(modifier = Modifier.height(2.dp))
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
-            textStyle = TextStyle(color = PowerampTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold),
+            textStyle = TextStyle(fontFamily = AppFontFamily, color = PowerampTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold.appWeight),
             cursorBrush = SolidColor(ThemeBerryPrimary),
             modifier = Modifier
                 .fillMaxWidth()
@@ -815,7 +817,7 @@ private fun TagEditInput(label: String, value: String, onValueChange: (String) -
  * 4. Sleep Timer Dialog (`10_sleep_timer.png`).
  */
 @Composable
-fun PowerampSleepTimerDialog(controller: PowerampController) {
+private fun PowerampSleepTimerDialogContent(controller: PowerampController) {
     var draftMinutes by remember { mutableIntStateOf(controller.sleepTimerMinutes) }
 
     Box(
@@ -847,7 +849,7 @@ fun PowerampSleepTimerDialog(controller: PowerampController) {
                     text = if (draftMinutes == 0) "Sleep Timer: disabled" else "Sleep Timer: $draftMinutes min.",
                     color = PowerampTextPrimary,
                     fontSize = 17.sp,
-                    fontWeight = FontWeight.ExtraBold
+                    fontWeight = FontWeight.ExtraBold.appWeight
                 )
             }
 
@@ -858,7 +860,7 @@ fun PowerampSleepTimerDialog(controller: PowerampController) {
                 text = if (draftMinutes == 0) "Disabled" else "$draftMinutes min",
                 color = ThemeBerryPrimary,
                 fontSize = 20.sp,
-                fontWeight = FontWeight.ExtraBold,
+                fontWeight = FontWeight.ExtraBold.appWeight,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
 
@@ -903,7 +905,7 @@ fun PowerampSleepTimerDialog(controller: PowerampController) {
                     text = "Play last song to end",
                     color = PowerampTextPrimary,
                     fontSize = 13.5.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold.appWeight
                 )
             }
 
@@ -919,7 +921,7 @@ fun PowerampSleepTimerDialog(controller: PowerampController) {
                     text = "Disable",
                     color = PowerampTextSecondary,
                     fontSize = 15.sp,
-                    fontWeight = FontWeight.ExtraBold,
+                    fontWeight = FontWeight.ExtraBold.appWeight,
                     modifier = Modifier
                         .clip(RoundedCornerShape(18.dp))
                         .clickable {
@@ -934,7 +936,7 @@ fun PowerampSleepTimerDialog(controller: PowerampController) {
                         text = "Cancel",
                         color = PowerampTextSecondary,
                         fontSize = 15.sp,
-                        fontWeight = FontWeight.ExtraBold,
+                        fontWeight = FontWeight.ExtraBold.appWeight,
                         modifier = Modifier
                             .clip(RoundedCornerShape(18.dp))
                             .clickable { controller.showSleepTimerDialog = false }
@@ -957,7 +959,7 @@ fun PowerampSleepTimerDialog(controller: PowerampController) {
                             text = "OK",
                             color = Color.White,
                             fontSize = 15.sp,
-                            fontWeight = FontWeight.ExtraBold
+                            fontWeight = FontWeight.ExtraBold.appWeight
                         )
                     }
                 }
@@ -970,9 +972,11 @@ fun PowerampSleepTimerDialog(controller: PowerampController) {
  * 5. Equalizer Presets Selection Bottom Sheet (`06_eq_presets.png`).
  */
 @Composable
-fun PowerampEqPresetBottomSheet(controller: PowerampController) {
+private fun PowerampEqPresetBottomSheetContent(controller: PowerampController) {
     var presetQuery by remember { mutableStateOf("") }
     var activeFilter by remember { mutableStateOf("All") }
+    // The sheet stays open while the picker is shown so the result reaches this launcher; close it afterwards
+    val importAutoEq = rememberAutoEqImportLauncher(controller) { controller.showEqPresetSheet = false }
 
     val filteredPresets = controller.eqPresets.filter { preset ->
         val matchesQuery = presetQuery.isBlank() || preset.name.contains(presetQuery, ignoreCase = true)
@@ -1023,13 +1027,13 @@ fun PowerampEqPresetBottomSheet(controller: PowerampController) {
                 Spacer(modifier = Modifier.width(10.dp))
                 Box(modifier = Modifier.weight(1f)) {
                     if (presetQuery.isEmpty()) {
-                        Text("Search", color = Color(0xFF9EA0A5), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text("Search", color = Color(0xFF9EA0A5), fontSize = 15.sp, fontWeight = FontWeight.Bold.appWeight)
                     }
                     BasicTextField(
                         value = presetQuery,
                         onValueChange = { presetQuery = it },
                         singleLine = true,
-                        textStyle = TextStyle(color = PowerampTextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold),
+                        textStyle = TextStyle(fontFamily = AppFontFamily, color = PowerampTextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold.appWeight),
                         cursorBrush = SolidColor(ThemeBerryPrimary),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -1063,7 +1067,7 @@ fun PowerampEqPresetBottomSheet(controller: PowerampController) {
                             text = chip,
                             color = if (selected) PowerampOnAccent else PowerampTextPrimary,
                             fontSize = 12.5.sp,
-                            fontWeight = FontWeight.ExtraBold
+                            fontWeight = FontWeight.ExtraBold.appWeight
                         )
                     }
                 }
@@ -1082,7 +1086,7 @@ fun PowerampEqPresetBottomSheet(controller: PowerampController) {
                         .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("Assigned", color = Color(0xFF4B4F58), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("Assigned", color = Color(0xFF4B4F58), fontSize = 12.sp, fontWeight = FontWeight.Bold.appWeight)
                 }
 
                 Box(
@@ -1093,7 +1097,7 @@ fun PowerampEqPresetBottomSheet(controller: PowerampController) {
                         .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("Device", color = Color(0xFF4B4F58), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("Device", color = Color(0xFF4B4F58), fontSize = 12.sp, fontWeight = FontWeight.Bold.appWeight)
                 }
 
                 Box(
@@ -1108,7 +1112,7 @@ fun PowerampEqPresetBottomSheet(controller: PowerampController) {
                         .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("✕  Reset filters", color = Color(0xFF4B4F58), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text("✕  Reset filters", color = Color(0xFF4B4F58), fontSize = 12.sp, fontWeight = FontWeight.Bold.appWeight)
                 }
             }
 
@@ -1120,6 +1124,55 @@ fun PowerampEqPresetBottomSheet(controller: PowerampController) {
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 val grouped = filteredPresets.groupBy { it.category }
+                // AutoEq: import a headphone profile (ParametricEQ.txt) instead of shipping fake built-ins
+                val showAutoEq = activeFilter in listOf("All", "AutoEq", "Parametric") &&
+                    (presetQuery.isBlank() || "autoeq".contains(presetQuery.trim(), ignoreCase = true) ||
+                        controller.parametricProfileName.contains(presetQuery.trim(), ignoreCase = true) ||
+                        grouped.containsKey("AutoEq"))
+                val autoEqItems: LazyListScope.() -> Unit = {
+                    if (controller.parametricProfileName.isNotBlank()) {
+                        item {
+                            AutoEqSheetRow(
+                                title = controller.parametricProfileName,
+                                subtitle = "Imported profile · ${controller.parametricBands.size} filters",
+                                icon = Icons.Filled.Tune,
+                                selected = controller.parametricEqEnabled,
+                                onClick = {
+                                    controller.setParametricEq(true)
+                                    controller.showEqPresetSheet = false
+                                }
+                            )
+                        }
+                    }
+                    item {
+                        AutoEqSheetRow(
+                            title = "Import AutoEQ profile…",
+                            subtitle = "Pick a ParametricEQ.txt for your headphones",
+                            icon = Icons.Filled.FileOpen,
+                            onClick = importAutoEq
+                        )
+                    }
+                }
+                if (showAutoEq && !grouped.containsKey("AutoEq")) {
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "AutoEq",
+                                color = PowerampTextSecondary,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.ExtraBold.appWeight
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            HorizontalDivider(color = PowerampBorderGray, thickness = 1.dp)
+                        }
+                    }
+                    autoEqItems()
+                }
                 grouped.forEach { (catName, presetsInCat) ->
                     item {
                         Row(
@@ -1132,12 +1185,13 @@ fun PowerampEqPresetBottomSheet(controller: PowerampController) {
                                 text = catName,
                                 color = PowerampTextSecondary,
                                 fontSize = 11.5.sp,
-                                fontWeight = FontWeight.ExtraBold
+                                fontWeight = FontWeight.ExtraBold.appWeight
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             HorizontalDivider(color = PowerampBorderGray, thickness = 1.dp)
                         }
                     }
+                    if (catName == "AutoEq" && showAutoEq) autoEqItems()
 
                     items(presetsInCat) { preset ->
                         val isSelected = controller.selectedPresetName == preset.name ||
@@ -1194,14 +1248,14 @@ fun PowerampEqPresetBottomSheet(controller: PowerampController) {
                                     text = preset.name,
                                     color = PowerampTextPrimary,
                                     fontSize = 15.5.sp,
-                                    fontWeight = FontWeight.ExtraBold
+                                    fontWeight = FontWeight.ExtraBold.appWeight
                                 )
                                 if (preset.category == "User") {
                                     Text(
                                         text = "Default Preset",
                                         color = PowerampTextSecondary,
                                         fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.Bold
+                                        fontWeight = FontWeight.Bold.appWeight
                                     )
                                 }
                             }
@@ -1226,7 +1280,7 @@ fun PowerampEqPresetBottomSheet(controller: PowerampController) {
  * 6. Reverb Preset Picker Dialog.
  */
 @Composable
-fun PowerampReverbPresetDialog(controller: PowerampController) {
+private fun PowerampReverbPresetDialogContent(controller: PowerampController) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -1247,7 +1301,7 @@ fun PowerampReverbPresetDialog(controller: PowerampController) {
                 text = "Reverb Presets",
                 color = PowerampTextPrimary,
                 fontSize = 20.sp,
-                fontWeight = FontWeight.ExtraBold
+                fontWeight = FontWeight.ExtraBold.appWeight
             )
             Spacer(modifier = Modifier.height(12.dp))
             controller.reverbPresets.forEach { preset ->
@@ -1268,7 +1322,7 @@ fun PowerampReverbPresetDialog(controller: PowerampController) {
                         text = preset.name,
                         color = PowerampTextPrimary,
                         fontSize = 15.5.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold.appWeight
                     )
                     if (controller.selectedReverbPreset == preset.name) {
                         Icon(
@@ -1288,7 +1342,7 @@ fun PowerampReverbPresetDialog(controller: PowerampController) {
  * 7. Add To Playlist Dialog & Create New Playlist.
  */
 @Composable
-fun PowerampPlaylistDialog(controller: PowerampController) {
+private fun PowerampPlaylistDialogContent(controller: PowerampController) {
     val track = controller.actionTargetTrack ?: controller.currentTrack
     var newPlaylistName by remember { mutableStateOf("") }
 
@@ -1312,7 +1366,7 @@ fun PowerampPlaylistDialog(controller: PowerampController) {
                 text = "Add to Playlist",
                 color = PowerampTextPrimary,
                 fontSize = 20.sp,
-                fontWeight = FontWeight.ExtraBold
+                fontWeight = FontWeight.ExtraBold.appWeight
             )
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -1332,7 +1386,7 @@ fun PowerampPlaylistDialog(controller: PowerampController) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(pl.name, color = PowerampTextPrimary, fontSize = 15.5.sp, fontWeight = FontWeight.Bold)
+                    Text(pl.name, color = PowerampTextPrimary, fontSize = 15.5.sp, fontWeight = FontWeight.Bold.appWeight)
                     Text("${pl.trackIds.size} songs", color = PowerampTextSecondary, fontSize = 12.5.sp)
                 }
             }
@@ -1363,7 +1417,7 @@ fun PowerampPlaylistDialog(controller: PowerampController) {
                         .padding(horizontal = 18.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("+ Create", color = PowerampOnAccent, fontWeight = FontWeight.ExtraBold)
+                    Text("+ Create", color = PowerampOnAccent, fontWeight = FontWeight.ExtraBold.appWeight)
                 }
             }
         }
@@ -1374,7 +1428,7 @@ fun PowerampPlaylistDialog(controller: PowerampController) {
  * 8. Full Poweramp Settings Screen (`17_settings_clean.png`).
  */
 @Composable
-fun PowerampSettingsOverlay(controller: PowerampController) {
+private fun PowerampSettingsOverlayContent(controller: PowerampController) {
     var activeSubSetting by remember { mutableStateOf<String?>(null) }
 
     Column(
@@ -1413,7 +1467,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                 text = activeSubSetting ?: "Settings",
                 color = Color.White,
                 fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.Bold.appWeight,
                 modifier = Modifier.weight(1f)
             )
             Box(
@@ -1467,15 +1521,19 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                         item {
                             SettingChipSelectorRow(
                                 title = "Settings Font",
-                                options = listOf("Default", "Alternative font", "Bold", "Bold+"),
+                                subtitle = "Default is lighter, Bold+ heavier; Alternative font uses the system serif family",
+                                options = SETTINGS_FONTS,
                                 selected = controller.settingsFont,
-                                onSelect = { controller.settingsFont = it }
+                                onSelect = {
+                                    controller.settingsFont = it
+                                    AppTheme.font = it
+                                }
                             )
                         }
                         item {
                             SettingToggleRow(
                                 title = "Waveseek Smooth Animation",
-                                subtitle = "Real-time scrolling waveform seekbar",
+                                subtitle = "Progress glides every frame; off, it moves in one-second steps",
                                 checked = controller.smoothSeekbarAnimation,
                                 onCheckedChange = { controller.smoothSeekbarAnimation = it }
                             )
@@ -1483,7 +1541,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                         item {
                             SettingToggleRow(
                                 title = "Play/Pause Morphing Animation",
-                                subtitle = "Poweramp rounded double pillar to triangle spring morph",
+                                subtitle = "Animate the play/pause icon; off, it switches instantly",
                                 checked = controller.playPauseMorphAnimation,
                                 onCheckedChange = { controller.playPauseMorphAnimation = it }
                             )
@@ -1499,9 +1557,25 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                         item {
                             SettingToggleRow(
                                 title = "Status Bar Overlay",
-                                subtitle = "Show transparent audiophile top status bar",
+                                subtitle = "Show the system status bar; off, swipe down from the top to see it briefly",
                                 checked = controller.showStatusBarOverlay,
                                 onCheckedChange = { controller.showStatusBarOverlay = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Rating Pill",
+                                subtitle = "Like / dislike buttons below the player controls",
+                                checked = controller.showRatingPill,
+                                onCheckedChange = { controller.showRatingPill = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Audio Info Line",
+                                subtitle = "Sample rate, bitrate and format below the player controls",
+                                checked = controller.showMetaLine,
+                                onCheckedChange = { controller.showMetaLine = it }
                             )
                         }
                         item {
@@ -1531,7 +1605,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column {
-                                        Text("Sleep Timer", color = PowerampTextPrimary, fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold)
+                                        Text("Sleep Timer", color = PowerampTextPrimary, fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold.appWeight)
                                         Spacer(modifier = Modifier.height(2.dp))
                                         Text(if (controller.sleepTimerMinutes > 0) "${controller.sleepTimerMinutes} min remaining (active)" else "Tap to set auto-stop timer", color = PowerampTextSecondary, fontSize = 12.5.sp)
                                     }
@@ -1564,8 +1638,17 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                             )
                         }
                         item {
+                            SettingToggleRow(
+                                title = "MusicAmp audio engine",
+                                subtitle = "Decodes and plays audio inside the app, which enables the DSP (EQ, tone, reverb, stereo), ReplayGain, DVC, hi-res output and DSD playback. Off: the Android MediaPlayer with the device equalizer only.",
+                                checked = controller.useNativeEngine,
+                                onCheckedChange = { controller.setNativeEngine(it) }
+                            )
+                        }
+                        item {
                             SettingChipSelectorRow(
                                 title = "ReplayGain Mode",
+                                subtitle = "Evens out loudness using the ReplayGain tags in your files: per track, or per album to keep the album's own dynamics. Needs the MusicAmp engine.",
                                 options = listOf("Off", "Track Gain", "Album Gain"),
                                 selected = controller.replayGainMode,
                                 onSelect = { controller.replayGainMode = it }
@@ -1574,6 +1657,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                         item {
                             SettingSliderRow(
                                 title = "ReplayGain Preamp",
+                                subtitle = "Extra gain added on top of the ReplayGain adjustment",
                                 displayValue = "%+.1f dB".format(controller.replayGainPreampDb),
                                 fraction = (controller.replayGainPreampDb + 6f) / 12f,
                                 onFractionChange = { controller.replayGainPreampDb = (it * 12f) - 6f }
@@ -1582,15 +1666,25 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                         item {
                             SettingToggleRow(
                                 title = "Direct Volume Control (DVC)",
-                                subtitle = "High dynamic range & equalizer headroom pipeline",
+                                subtitle = "Applies volume inside the app while the system media volume is held at maximum. Gives the EQ headroom to boost without clipping. Needs the MusicAmp engine." +
+                                    if (controller.dvcActive) " Active now." else "",
                                 checked = controller.dvcEnabled,
                                 onCheckedChange = { controller.dvcEnabled = it }
                             )
                         }
                         item {
                             SettingToggleRow(
+                                title = "Bit-Perfect Output (USB DAC)",
+                                subtitle = if (controller.bitPerfectEnabled) controller.bitPerfectStatus
+                                    else "Sends untouched audio to a USB DAC at the track's native rate. Android 14+. EQ, effects, crossfade and tempo are bypassed while active.",
+                                checked = controller.bitPerfectEnabled,
+                                onCheckedChange = { controller.setBitPerfect(it) }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
                                 title = "Hi-Res Audio Output",
-                                subtitle = "24-bit / 192 kHz high-precision internal rendering",
+                                subtitle = "32-bit float output at the track's native sample rate, where the device supports it. Needs the MusicAmp engine.",
                                 checked = controller.hiResAudioEnabled,
                                 onCheckedChange = { controller.hiResAudioEnabled = it }
                             )
@@ -1598,6 +1692,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                         item {
                             SettingChipSelectorRow(
                                 title = "Audio Buffer Size",
+                                subtitle = "Size of the MusicAmp engine's output buffer. Larger buffers resist dropouts under load but react more slowly to EQ and volume changes.",
                                 options = listOf("Small (25ms)", "Normal (50ms)", "Large (100ms)", "Huge (200ms)"),
                                 selected = controller.audioBufferSize,
                                 onSelect = { controller.audioBufferSize = it }
@@ -1617,12 +1712,24 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                                         text = "AUDIO ENGINE STATUS",
                                         color = ThemeBerryPrimary,
                                         fontSize = 12.sp,
-                                        fontWeight = FontWeight.ExtraBold,
+                                        fontWeight = FontWeight.ExtraBold.appWeight,
                                         letterSpacing = 0.8.sp
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
+                                    val onOff = { b: Boolean -> if (b) "on" else "off" }
+                                    val eqLine = when {
+                                        controller.bitPerfectActive -> "bypassed (bit-perfect)"
+                                        controller.parametricEqEnabled -> "parametric, ${controller.parametricBands.count { it.enabled }} bands (${onOff(controller.eqEnabled)})"
+                                        else -> "10-band graphic (${onOff(controller.eqEnabled)})"
+                                    }
                                     Text(
-                                        text = "Output: Android system mixer (MediaPlayer)\nCurrent track: ${controller.currentTrack?.bottomBadgeInfo ?: "none"}\nEqualizer: 10-band UI mapped to the device equalizer (${if (controller.eqEnabled) "on" else "off"})\nTone: ${if (controller.toneEnabled) "on" else "off"}   Limiter headroom: ${if (controller.limitEnabled) "on" else "off"}\nCrossfade: ${if (controller.crossfadeEnabled) "%.1f s".format(controller.crossfadeDurationSec) else "off"}   Gapless: ${if (controller.gaplessEnabled) "on" else "off"}",
+                                        text = "Engine: ${controller.engineStatus}\n" +
+                                            "Output: ${if (controller.bitPerfectActive) "Bit-perfect, ${controller.bitPerfectStatus.removePrefix("Active on ")}" else if (controller.nativeEngineActive) "MusicAmp engine" else "Android MediaPlayer"}\n" +
+                                            "Current track: ${controller.currentTrack?.bottomBadgeInfo ?: "none"}\n" +
+                                            "Equalizer: $eqLine\n" +
+                                            "DVC: ${if (controller.dvcActive) "active" else "off"}   ReplayGain: ${controller.replayGainMode}\n" +
+                                            "Tone: ${onOff(controller.toneEnabled)}   Limiter: ${onOff(controller.limitEnabled)}\n" +
+                                            "Crossfade: ${if (controller.crossfadeEnabled) "%.1f s".format(controller.crossfadeDurationSec) else "off"}   Gapless: ${onOff(controller.gaplessEnabled)}",
                                         color = PowerampTextPrimary,
                                         fontSize = 13.sp,
                                         lineHeight = 18.sp
@@ -1764,14 +1871,14 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                                     .padding(16.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("Clear Album Art Cache", color = Color(0xFFD32F2F), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Text("Clear Album Art Cache", color = Color(0xFFD32F2F), fontWeight = FontWeight.Bold.appWeight, fontSize = 15.sp)
                             }
                         }
                     }
 
                     "Library" -> {
                         item {
-                            Text("MUSIC FOLDERS", color = ThemeBerryPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("MUSIC FOLDERS", color = ThemeBerryPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold.appWeight)
                         }
                         items(listOf("/sdcard/Music", "/sdcard/Download", "/sdcard/Podcasts")) { path ->
                             val isChecked = controller.selectedMusicFolders.contains(path)
@@ -1788,10 +1895,54 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                         item {
                             SettingToggleRow(
                                 title = "Auto-Scan on Startup",
-                                subtitle = "Check for newly added tracks when app opens",
+                                subtitle = "Re-index files added or changed since the last start",
                                 checked = controller.autoScanOnStartup,
                                 onCheckedChange = { controller.autoScanOnStartup = it }
                             )
+                        }
+                        item {
+                            Text("EXTRA FOLDERS (DSD, .CUE, .LRC)", color = ThemeBerryPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold.appWeight)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "Android does not list DSD files (.dsf/.dff) as music and hides .cue and .lrc files from music apps. " +
+                                    "Grant a folder once and MusicAmp reads them from there.",
+                                color = PowerampTextSecondary, fontSize = 12.5.sp
+                            )
+                        }
+                        items(controller.extraFolders.toList()) { uri ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(PowerampBorderGray)
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    controller.extraFolderLabel(uri), color = PowerampTextPrimary, fontSize = 14.5.sp,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    "Remove", color = ThemeBerryPrimary, fontSize = 13.5.sp, fontWeight = FontWeight.Bold.appWeight,
+                                    modifier = Modifier.clickable { controller.removeExtraFolder(uri) }.padding(6.dp)
+                                )
+                            }
+                        }
+                        item {
+                            val folderPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+                                androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()
+                            ) { picked -> if (picked != null) controller.addExtraFolder(picked) }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(PowerampBorderGray)
+                                    .clickable { folderPicker.launch(null) }
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("+ Add folder", color = PowerampTextPrimary, fontWeight = FontWeight.Bold.appWeight, fontSize = 15.sp)
+                            }
                         }
                         item {
                             SettingToggleRow(
@@ -1808,13 +1959,12 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                                     .clip(RoundedCornerShape(16.dp))
                                     .background(ThemeBerryPrimary)
                                     .clickable {
-                                        controller.scanMediaLibrary()
-                                        controller.showToast("Library Rescanned", "${controller.allTracks.size} tracks indexed")
+                                        controller.refreshLibrary(showFeedback = true)
                                     }
                                     .padding(vertical = 14.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("Full Rescan Media Library Now", color = PowerampOnAccent, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Text("Full Rescan Media Library Now", color = PowerampOnAccent, fontWeight = FontWeight.Bold.appWeight, fontSize = 16.sp)
                             }
                         }
                     }
@@ -1847,7 +1997,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                         item {
                             SettingToggleRow(
                                 title = "Bluetooth Direct Volume Control",
-                                subtitle = "Hardware volume tracking over Bluetooth A2DP",
+                                subtitle = "Uses Direct Volume Control on Bluetooth outputs too: volume is applied inside the app while the Bluetooth media volume is held at maximum. Off: Bluetooth keeps normal system volume. Needs the MusicAmp engine.",
                                 checked = controller.bluetoothDvcEnabled,
                                 onCheckedChange = { controller.bluetoothDvcEnabled = it }
                             )
@@ -1883,7 +2033,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                                     .padding(16.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("Export Settings & Presets Backup", color = PowerampTextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Text("Export Settings & Presets Backup", color = PowerampTextPrimary, fontWeight = FontWeight.Bold.appWeight, fontSize = 15.sp)
                             }
                         }
                         item {
@@ -1898,7 +2048,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                                     .padding(16.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("Reset All Settings to Factory Default", color = Color(0xFFC62828), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Text("Reset All Settings to Factory Default", color = Color(0xFFC62828), fontWeight = FontWeight.Bold.appWeight, fontSize = 15.sp)
                             }
                         }
                     }
@@ -1917,7 +2067,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                                     text = "MUSICAMP",
                                     color = PowerampTextPrimary,
                                     fontSize = 24.sp,
-                                    fontWeight = FontWeight.Black,
+                                    fontWeight = FontWeight.Black.appWeight,
                                     fontStyle = FontStyle.Italic,
                                     letterSpacing = 1.2.sp
                                 )
@@ -1926,7 +2076,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                                     text = "build-1013-uni (Full Version)",
                                     color = ThemeBerryPrimary,
                                     fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold.appWeight
                                 )
                                 Spacer(modifier = Modifier.height(14.dp))
                                 Box(
@@ -1935,7 +2085,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                                         .background(Color(0xFFE8F5E9))
                                         .padding(horizontal = 14.dp, vertical = 6.dp)
                                 ) {
-                                    Text("✓ Lifetime License Activated", color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Text("✓ Lifetime License Activated", color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold.appWeight, fontSize = 13.sp)
                                 }
                                 Spacer(modifier = Modifier.height(14.dp))
                                 Text(
@@ -1955,7 +2105,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                                     .clickable { controller.showChangelogDialog = true }
                                     .padding(16.dp)
                             ) {
-                                Text("View Engine Changelog", color = PowerampTextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Text("View Engine Changelog", color = PowerampTextPrimary, fontWeight = FontWeight.Bold.appWeight, fontSize = 15.sp)
                             }
                         }
                         item {
@@ -1967,7 +2117,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                                     .clickable { controller.showHelpDialog = true }
                                     .padding(16.dp)
                             ) {
-                                Text("Help & FAQ", color = PowerampTextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Text("Help & FAQ", color = PowerampTextPrimary, fontWeight = FontWeight.Bold.appWeight, fontSize = 15.sp)
                             }
                         }
                     }
@@ -1983,7 +2133,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                         text = "Settings",
                         color = ThemeBerryPrimary,
                         fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.SemiBold.appWeight,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     )
                 }
@@ -2020,7 +2170,7 @@ fun PowerampSettingsOverlay(controller: PowerampController) {
                                 text = title,
                                 color = PowerampTextPrimary,
                                 fontSize = 19.sp,
-                                fontWeight = FontWeight.Normal
+                                fontWeight = FontWeight.Normal.appWeight
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
@@ -2054,7 +2204,7 @@ private fun SettingToggleRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = PowerampTextPrimary, fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold)
+            Text(title, color = PowerampTextPrimary, fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold.appWeight)
             Spacer(modifier = Modifier.height(2.dp))
             Text(subtitle, color = PowerampTextSecondary, fontSize = 12.5.sp)
         }
@@ -2068,7 +2218,8 @@ private fun SettingSliderRow(
     title: String,
     displayValue: String,
     fraction: Float,
-    onFractionChange: (Float) -> Unit
+    onFractionChange: (Float) -> Unit,
+    subtitle: String? = null
 ) {
     Column(
         modifier = Modifier
@@ -2082,8 +2233,12 @@ private fun SettingSliderRow(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(title, color = PowerampTextPrimary, fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold)
-            Text(displayValue, color = ThemeBerryPrimary, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+            Text(title, color = PowerampTextPrimary, fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold.appWeight)
+            Text(displayValue, color = ThemeBerryPrimary, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold.appWeight)
+        }
+        if (subtitle != null) {
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(subtitle, color = PowerampTextSecondary, fontSize = 12.5.sp)
         }
         Spacer(modifier = Modifier.height(6.dp))
         Slider(
@@ -2103,7 +2258,8 @@ private fun SettingChipSelectorRow(
     title: String,
     options: List<String>,
     selected: String,
-    onSelect: (String) -> Unit
+    onSelect: (String) -> Unit,
+    subtitle: String? = null
 ) {
     Column(
         modifier = Modifier
@@ -2112,7 +2268,11 @@ private fun SettingChipSelectorRow(
             .background(PowerampDialogBg)
             .padding(14.dp)
     ) {
-        Text(title, color = PowerampTextPrimary, fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold)
+        Text(title, color = PowerampTextPrimary, fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold.appWeight)
+        if (subtitle != null) {
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(subtitle, color = PowerampTextSecondary, fontSize = 12.5.sp)
+        }
         Spacer(modifier = Modifier.height(10.dp))
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2130,7 +2290,7 @@ private fun SettingChipSelectorRow(
                         text = opt,
                         color = if (isSelected) PowerampOnAccent else PowerampTextPrimary,
                         fontSize = 13.sp,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        fontWeight = if (isSelected) FontWeight.Bold.appWeight else FontWeight.Medium.appWeight
                     )
                 }
             }
@@ -2142,7 +2302,7 @@ private fun SettingChipSelectorRow(
  * 9. Poweramp Toast Banner (`14_vis_panel.png`).
  */
 @Composable
-fun PowerampToastOverlay(
+private fun PowerampToastOverlayContent(
     title: String,
     subtitle: String?,
     modifier: Modifier = Modifier
@@ -2168,7 +2328,7 @@ fun PowerampToastOverlay(
                 text = title,
                 color = Color.White,
                 fontSize = 15.sp,
-                fontWeight = FontWeight.ExtraBold
+                fontWeight = FontWeight.ExtraBold.appWeight
             )
             if (!subtitle.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(2.dp))
@@ -2176,7 +2336,7 @@ fun PowerampToastOverlay(
                     text = subtitle,
                     color = PowerampBorderGray,
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold.appWeight
                 )
             }
         }
@@ -2187,7 +2347,7 @@ fun PowerampToastOverlay(
  * 10. Simple Info Modal for Changelog, Help, and Album Art Selector.
  */
 @Composable
-fun PowerampSimpleInfoDialog(
+private fun PowerampSimpleInfoDialogContent(
     title: String,
     body: String,
     onDismiss: () -> Unit
@@ -2208,7 +2368,7 @@ fun PowerampSimpleInfoDialog(
                 .clickable(enabled = false) {}
                 .padding(22.dp)
         ) {
-            Text(title, color = PowerampTextPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+            Text(title, color = PowerampTextPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold.appWeight)
             Spacer(modifier = Modifier.height(12.dp))
             Text(body, color = Color(0xFF33363D), fontSize = 14.sp, lineHeight = 20.sp)
             Spacer(modifier = Modifier.height(18.dp))
@@ -2222,7 +2382,7 @@ fun PowerampSimpleInfoDialog(
                     .padding(horizontal = 22.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text("OK", color = PowerampOnAccent, fontWeight = FontWeight.ExtraBold)
+                Text("OK", color = PowerampOnAccent, fontWeight = FontWeight.ExtraBold.appWeight)
             }
         }
     }
@@ -2238,7 +2398,7 @@ private fun AccentColorPickerRow(selected: String, onSelect: (String) -> Unit) {
             .background(PowerampDialogBg)
             .padding(14.dp)
     ) {
-        Text("Accent colour", color = PowerampTextPrimary, fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold)
+        Text("Accent colour", color = PowerampTextPrimary, fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold.appWeight)
         Spacer(modifier = Modifier.height(4.dp))
         Text(selected, color = PowerampTextSecondary, fontSize = 12.sp)
         Spacer(modifier = Modifier.height(10.dp))
@@ -2261,6 +2421,132 @@ private fun AccentColorPickerRow(selected: String, onSelect: (String) -> Unit) {
                     if (isSelected) {
                         Icon(Icons.Filled.Check, contentDescription = name, tint = Color.White, modifier = Modifier.size(20.dp))
                     }
+                }
+            }
+        }
+    }
+}
+
+// ---- Public entry points: each overlay picks up the Look and Feel settings font ----
+@Composable
+fun PowerampMainMenuOverlay(controller: PowerampController) =
+    AppTextStyleScope { PowerampMainMenuOverlayContent(controller) }
+
+@Composable
+fun PowerampTrackMenuDialog(controller: PowerampController) =
+    AppTextStyleScope { PowerampTrackMenuDialogContent(controller) }
+
+@Composable
+fun PowerampInfoTagsSheet(controller: PowerampController) =
+    AppTextStyleScope { PowerampInfoTagsSheetContent(controller) }
+
+@Composable
+fun PowerampEditTagsDialog(controller: PowerampController) =
+    AppTextStyleScope { PowerampEditTagsDialogContent(controller) }
+
+@Composable
+fun PowerampSleepTimerDialog(controller: PowerampController) =
+    AppTextStyleScope { PowerampSleepTimerDialogContent(controller) }
+
+@Composable
+fun PowerampEqPresetBottomSheet(controller: PowerampController) =
+    AppTextStyleScope { PowerampEqPresetBottomSheetContent(controller) }
+
+@Composable
+fun PowerampReverbPresetDialog(controller: PowerampController) =
+    AppTextStyleScope { PowerampReverbPresetDialogContent(controller) }
+
+@Composable
+fun PowerampPlaylistDialog(controller: PowerampController) =
+    AppTextStyleScope { PowerampPlaylistDialogContent(controller) }
+
+@Composable
+fun PowerampSettingsOverlay(controller: PowerampController) =
+    LookAndFeelScope(controller) { PowerampSettingsOverlayContent(controller) }
+
+@Composable
+fun PowerampToastOverlay(title: String, subtitle: String?, modifier: Modifier = Modifier) =
+    AppTextStyleScope { PowerampToastOverlayContent(title, subtitle, modifier) }
+
+@Composable
+fun PowerampSimpleInfoDialog(title: String, body: String, onDismiss: () -> Unit) =
+    AppTextStyleScope { PowerampSimpleInfoDialogContent(title, body, onDismiss) }
+
+/**
+ * 11. Add Internet Radio Stream dialog (title + http(s) URL).
+ */
+@Composable
+fun PowerampAddStreamDialog(controller: PowerampController) = AppTextStyleScope {
+    var title by remember { mutableStateOf("") }
+    var url by remember { mutableStateOf("") }
+    val urlValid = url.trim().let { it.startsWith("http://", true) || it.startsWith("https://", true) } && url.trim().length > 8
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xAA000000))
+            .clickable { controller.showAddStreamDialog = false },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 24.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(26.dp))
+                .background(PowerampDialogBg)
+                .clickable(enabled = false) {}
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Add Stream",
+                color = PowerampTextPrimary,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.ExtraBold.appWeight
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Internet radio or any direct http(s) audio stream",
+                color = PowerampTextSecondary,
+                fontSize = 12.5.sp
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            TagEditInput("Title", title) { title = it }
+            TagEditInput("Stream URL", url) { url = it.trim() }
+            if (url.isNotBlank() && !urlValid) {
+                Text(
+                    text = "Use an http:// or https:// address",
+                    color = Color(0xFFE85050),
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Bold.appWeight
+                )
+            }
+            Spacer(modifier = Modifier.height(14.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = { controller.showAddStreamDialog = false }) {
+                    Text("Cancel", color = PowerampTextSecondary, fontWeight = FontWeight.Bold.appWeight)
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .height(38.dp)
+                        .clip(RoundedCornerShape(19.dp))
+                        .background(if (urlValid) ThemeBerryPrimary else PowerampBorderGray)
+                        .clickable(enabled = urlValid) {
+                            controller.addStream(title, url)
+                            controller.showAddStreamDialog = false
+                        }
+                        .padding(horizontal = 20.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "Add",
+                        color = if (urlValid) PowerampOnAccent else PowerampTextSecondary,
+                        fontWeight = FontWeight.ExtraBold.appWeight
+                    )
                 }
             }
         }

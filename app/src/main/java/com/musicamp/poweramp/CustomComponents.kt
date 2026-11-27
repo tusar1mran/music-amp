@@ -1382,7 +1382,7 @@ fun PowerampEqBandSlider(
             text = label,
             color = PowerampTextPrimary,
             fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.Bold.appWeight,
             maxLines = 1
         )
         Text(
@@ -1530,7 +1530,7 @@ fun PowerampBottomDock(
                         text = track.title,
                         color = PowerampTextPrimary,
                         fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Bold.appWeight,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -1538,7 +1538,7 @@ fun PowerampBottomDock(
                         text = track.artist,
                         color = PowerampTextSecondary,
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
+                        fontWeight = FontWeight.Medium.appWeight,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -1611,7 +1611,7 @@ fun PowerampBottomDock(
                         text = "Home",
                         color = if (isHomeActive) ThemeBerryPrimary else Color(0xFF8A8E99),
                         fontSize = 11.sp,
-                        fontWeight = if (isHomeActive) FontWeight.Bold else FontWeight.Medium
+                        fontWeight = if (isHomeActive) FontWeight.Bold.appWeight else FontWeight.Medium.appWeight
                     )
                 }
 
@@ -1641,7 +1641,7 @@ fun PowerampBottomDock(
                         text = "Album",
                         color = if (isAlbumActive) ThemeBerryPrimary else Color(0xFF8A8E99),
                         fontSize = 11.sp,
-                        fontWeight = if (isAlbumActive) FontWeight.Bold else FontWeight.Medium
+                        fontWeight = if (isAlbumActive) FontWeight.Bold.appWeight else FontWeight.Medium.appWeight
                     )
                 }
 
@@ -1703,7 +1703,7 @@ fun PowerampBottomDock(
                         text = "Playlist",
                         color = if (isPlaylistActive) ThemeBerryPrimary else Color(0xFF8A8E99),
                         fontSize = 11.sp,
-                        fontWeight = if (isPlaylistActive) FontWeight.Bold else FontWeight.Medium
+                        fontWeight = if (isPlaylistActive) FontWeight.Bold.appWeight else FontWeight.Medium.appWeight
                     )
                 }
 
@@ -1730,7 +1730,7 @@ fun PowerampBottomDock(
                         text = "Settings",
                         color = if (controller.showSettingsScreen) ThemeBerryPrimary else Color(0xFF8A8E99),
                         fontSize = 11.sp,
-                        fontWeight = if (controller.showSettingsScreen) FontWeight.Bold else FontWeight.Medium
+                        fontWeight = if (controller.showSettingsScreen) FontWeight.Bold.appWeight else FontWeight.Medium.appWeight
                     )
                 }
             }
@@ -1759,14 +1759,14 @@ fun LibraryCategoryBadge(
                     text = "𝄞",
                     color = Color.Black,
                     fontSize = (size.value * 0.62f).sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold.appWeight
                 )
             }
             "years" -> {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("`70", color = Color(0xFF1D3238), fontSize = 7.sp, fontWeight = FontWeight.Bold, lineHeight = 7.sp)
-                    Text("`90", color = Color(0xFF112024), fontSize = 8.sp, fontWeight = FontWeight.Bold, lineHeight = 8.sp)
-                    Text("`20", color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, lineHeight = 10.sp)
+                    Text("`70", color = Color(0xFF1D3238), fontSize = 7.sp, fontWeight = FontWeight.Bold.appWeight, lineHeight = 7.sp)
+                    Text("`90", color = Color(0xFF112024), fontSize = 8.sp, fontWeight = FontWeight.Bold.appWeight, lineHeight = 8.sp)
+                    Text("`20", color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold.appWeight, lineHeight = 10.sp)
                 }
             }
             "plus" -> {
@@ -1774,7 +1774,7 @@ fun LibraryCategoryBadge(
                     text = "+",
                     color = Color.Black,
                     fontSize = (size.value * 0.62f).sp,
-                    fontWeight = FontWeight.ExtraBold
+                    fontWeight = FontWeight.ExtraBold.appWeight
                 )
             }
             else -> {
@@ -1894,7 +1894,7 @@ fun PowerampAlphabetScroller(
                     color = if (isActive) ThemeBerryPrimary else Color(0xFFB5B7BC),
                     fontSize = if (isActive) 11.sp else 8.5.sp,
                     lineHeight = if (isActive) 11.sp else 9.sp,
-                    fontWeight = if (isActive) FontWeight.ExtraBold else FontWeight.Bold
+                    fontWeight = if (isActive) FontWeight.ExtraBold.appWeight else FontWeight.Bold.appWeight
                 )
             }
         }
@@ -1936,7 +1936,7 @@ fun PowerampAlphabetBubble(
                 text = lastNonNull.value.toString(),
                 color = ThemeBerryPrimary,
                 fontSize = 40.sp,
-                fontWeight = FontWeight.Black
+                fontWeight = FontWeight.Black.appWeight
             )
         }
     }

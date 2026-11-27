@@ -22,3 +22,5 @@ dist/
 .vercel/
 *.tsbuildinfo
 *.local
+.env
+promo-video/output/

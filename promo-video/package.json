@@ -1,0 +1,13 @@
+{
+  "name": "musicamp-promo-video",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "generate": "node generate-promo.mjs"
+  },
+  "dependencies": {
+    "@google/genai": "^1.0.0",
+    "dotenv": "^16.4.7",
+    "ffmpeg-static": "^5.2.0"
+  }
+}

@@ -31,8 +31,17 @@ data class AudioTrack(
     val lyrics: String = "",
     val waveformBars: List<Float> = emptyList(),
     val tagTitle: String = "",
-    val albumId: Long = 0L
+    val albumId: Long = 0L,
+    /** CUE virtual track: start/end inside [filePath] in ms (end 0 = to the end of the file). */
+    val cueStartMs: Long = 0L,
+    val cueEndMs: Long = 0L
 ) {
+    /** True for a track cut out of a larger file by a cue sheet. */
+    val isCue: Boolean get() = cueStartMs > 0L || cueEndMs > 0L
+    /** True for an internet radio stream. */
+    val isStream: Boolean get() = uri?.scheme == "http" || uri?.scheme == "https"
+    val isDsd: Boolean get() = formatExt.equals("dsf", true) || formatExt.equals("dff", true)
+
     val formattedDuration: String
         get() {
             val totalSeconds = (durationMs / 1000).coerceAtLeast(0)
@@ -190,9 +199,7 @@ val BUILT_IN_EQ_PRESETS = listOf(
     EqPreset("Rock", "Built-in", false, 0f, listOf(5.2f, 3.8f, 1.5f, -2.0f, -3.0f, -1.0f, 2.5f, 4.5f, 5.8f, 6.0f), 0.35f, 0.40f),
     EqPreset("Techno", "Built-in", false, 0f, listOf(6.2f, 5.5f, 2.0f, -2.0f, -1.5f, 1.5f, 4.2f, 5.5f, 5.8f, 5.2f), 0.55f, 0.45f),
     EqPreset("Treble", "Built-in", false, 0f, listOf(0f, 0f, 0f, 0f, 0f, 1.2f, 3.0f, 5.0f, 6.5f, 7.5f), 0f, 0.50f),
-    EqPreset("Vocal", "Built-in", false, 0f, listOf(-3.0f, -2.5f, -1.0f, 2.5f, 5.2f, 5.5f, 4.0f, 1.8f, 0f, -1.5f), 0f, 0.15f),
-    EqPreset("Harman In-Ear 2019", "AutoEq", false, -1.5f, listOf(4.2f, 3.8f, 2.2f, 0.5f, -0.8f, 0.6f, 2.8f, 4.1f, 2.5f, 1.0f), 0.25f, 0.20f),
-    EqPreset("Sony WH-1000XM5", "AutoEq", false, -2.0f, listOf(-2.5f, -3.2f, -1.8f, 0.4f, 1.5f, 2.2f, 3.1f, 1.8f, 2.9f, 1.5f), 0.10f, 0.25f)
+    EqPreset("Vocal", "Built-in", false, 0f, listOf(-3.0f, -2.5f, -1.0f, 2.5f, 5.2f, 5.5f, 4.0f, 1.8f, 0f, -1.5f), 0f, 0.15f)
 )
 
 const val WAVEFORM_BARS = 84
