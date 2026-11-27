@@ -604,7 +604,9 @@ fun BerrySymmetricalWaveform(
     modifier: Modifier = Modifier,
     onScrubStart: () -> Unit = {},
     onScrubPreview: (Float) -> Unit = {},
-    onScrubEnd: (Float) -> Unit = onSeek
+    onScrubEnd: (Float) -> Unit = onSeek,
+    abStartFraction: Float? = null,
+    abEndFraction: Float? = null
 ) {
     val currentOnSeek by rememberUpdatedState(onSeek)
     val currentOnScrubStart by rememberUpdatedState(onScrubStart)
@@ -713,6 +715,31 @@ fun BerrySymmetricalWaveform(
                 topLeft = Offset(bx, centerY - barHalfHeight),
                 size = Size(barWidth, barHalfHeight * 2f),
                 cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
+            )
+        }
+
+        // A-B repeat loop region and markers
+        if (abStartFraction != null) {
+            val ax = startX + abStartFraction.coerceIn(0f, 1f) * actualTotalWidth
+            if (abEndFraction != null && abEndFraction > abStartFraction) {
+                val bx = startX + abEndFraction.coerceIn(0f, 1f) * actualTotalWidth
+                drawRect(
+                    color = PowerampNeonGreen.copy(alpha = 0.16f),
+                    topLeft = Offset(ax, 2.dp.toPx()),
+                    size = Size((bx - ax).coerceAtLeast(1f), h - 4.dp.toPx())
+                )
+                drawLine(
+                    color = PowerampNeonGreen,
+                    start = Offset(bx, 2.dp.toPx()),
+                    end = Offset(bx, h - 2.dp.toPx()),
+                    strokeWidth = 2.dp.toPx()
+                )
+            }
+            drawLine(
+                color = PowerampNeonGreen,
+                start = Offset(ax, 2.dp.toPx()),
+                end = Offset(ax, h - 2.dp.toPx()),
+                strokeWidth = 2.dp.toPx()
             )
         }
 

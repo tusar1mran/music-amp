@@ -154,6 +154,47 @@ enum class MainNavTab {
     SEARCH
 }
 
+enum class SortOrder(val label: String) {
+    TITLE("Title"),
+    ARTIST("Artist"),
+    ALBUM("Album"),
+    ALBUM_ARTIST("Album Artist"),
+    YEAR("Year"),
+    DURATION("Duration"),
+    DATE_ADDED("Date Added"),
+    PLAY_COUNT("Play Count"),
+    RATING("Rating"),
+    FILE_NAME("File Name"),
+    TRACK_NUMBER("Track Number"),
+    LAST_PLAYED("Last Played")
+}
+
+enum class LibraryViewStyle(val label: String) {
+    LIST("List"),
+    LIST_COMPACT("Compact"),
+    GRID_2("Grid 2"),
+    GRID_3("Grid 3")
+}
+
+enum class OutputKind(val label: String) {
+    SPEAKER("Speaker"),
+    WIRED("Wired"),
+    BLUETOOTH("Bluetooth"),
+    USB("USB"),
+    OTHER("Other")
+}
+
+enum class MediaButtonAction(val label: String) {
+    PREVIOUS("Previous"),
+    PLAY_PAUSE("Play/Pause"),
+    NEXT("Next"),
+    SHUFFLE("Shuffle"),
+    REPEAT("Repeat"),
+    LIKE("Like"),
+    REWIND_10("Rewind 10s"),
+    FORWARD_10("Forward 10s")
+}
+
 enum class EqSubTab {
     EQUALIZER,
     VOLUME,

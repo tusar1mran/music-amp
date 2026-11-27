@@ -91,6 +91,7 @@ class MainActivity : ComponentActivity() {
                 override fun handleOnBackPressed() {
                     when {
                         controller.showEditTagsDialog -> controller.showEditTagsDialog = false
+                        controller.showAudioInfoDialog -> controller.showAudioInfoDialog = false
                         controller.showInfoTagsSheet -> controller.showInfoTagsSheet = false
                         controller.showTrackActionDialog -> controller.showTrackActionDialog = false
                         controller.showSleepTimerDialog -> controller.showSleepTimerDialog = false
@@ -380,6 +381,28 @@ fun PowerampRootApp(controller: PowerampController) {
             exit = scaleOut(targetScale = 0.90f, animationSpec = tween(180)) + fadeOut(tween(150))
         ) {
             PowerampPlaylistDialog(controller = controller)
+        }
+        if (controller.showAudioInfoDialog) {
+            val info = controller.buildAudioInfo()
+            val body = buildString {
+                appendLine("Source: ${info.sourceFormat}")
+                appendLine("Output: ${info.outputFormat}")
+                appendLine("Engine: ${info.engineLabel}")
+                appendLine("ReplayGain: %+.2f dB".format(info.replayGainDb))
+                appendLine()
+                appendLine("Fidelity Score: ${info.fidelityScore} / 100")
+                appendLine("DSP Stages Active: ${info.dspStages.size}")
+                if (info.dspStages.isNotEmpty()) {
+                    appendLine("• " + info.dspStages.joinToString("\n• "))
+                } else {
+                    appendLine("• None (bypassed / clean path)")
+                }
+            }
+            PowerampSimpleInfoDialog(
+                title = "Audio Info",
+                body = body.trimEnd(),
+                onDismiss = { controller.showAudioInfoDialog = false }
+            )
         }
         if (controller.showAlbumArtDialog) {
             PowerampSimpleInfoDialog(

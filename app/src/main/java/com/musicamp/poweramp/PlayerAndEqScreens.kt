@@ -354,6 +354,12 @@ private fun PowerampPlayerScreenContent(
                 )
 
                 // Symmetrical Waveform Bar in center (zero-lag scrubbing at native refresh rate)
+                val abStartFrac = controller.abStartMs?.let {
+                    if (controller.durationMs > 0L) (it.toFloat() / controller.durationMs).coerceIn(0f, 1f) else null
+                }
+                val abEndFrac = controller.abEndMs?.let {
+                    if (controller.durationMs > 0L) (it.toFloat() / controller.durationMs).coerceIn(0f, 1f) else null
+                }
                 BerrySymmetricalWaveform(
                     bars = track?.waveformBars ?: emptyList(),
                     progress = seekProgress,
@@ -364,6 +370,8 @@ private fun PowerampPlayerScreenContent(
                         controller.isScrubbing = false
                         if (controller.durationMs > 0L) controller.seekToFraction(frac)
                     },
+                    abStartFraction = abStartFrac,
+                    abEndFraction = abEndFrac,
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp)
@@ -486,22 +494,57 @@ private fun PowerampPlayerScreenContent(
                     }
                 )
 
-                // Repeat Button
+                // Repeat & A-B Repeat Buttons
                 val isRepeat = controller.repeatMode != RepeatMode.OFF
-                IconButton(
-                    onClick = { controller.cycleRepeatMode() },
-                    modifier = Modifier.size(44.dp)
-                ) {
-                    Icon(
-                        imageVector = if (controller.repeatMode == RepeatMode.REPEAT_SONG || controller.repeatMode == RepeatMode.SINGLE_SONG) {
-                            Icons.Filled.RepeatOne
-                        } else {
-                            Icons.Filled.Repeat
-                        },
-                        contentDescription = "Repeat",
-                        tint = if (isRepeat) ThemeBerryPrimary else PowerampIconStrong,
-                        modifier = Modifier.size(24.dp)
-                    )
+                val abActive = controller.abStartMs != null
+                val abLabel = when {
+                    controller.abStartMs != null && controller.abEndMs != null -> "A-B"
+                    controller.abStartMs != null -> "A"
+                    else -> "A-B"
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .height(26.dp)
+                            .clip(RoundedCornerShape(13.dp))
+                            .background(
+                                when {
+                                    controller.abEndMs != null -> ThemeBerryPrimary
+                                    controller.abStartMs != null -> ThemeBerryPrimary.copy(alpha = 0.25f)
+                                    else -> Color.Transparent
+                                }
+                            )
+                            .border(
+                                1.dp,
+                                if (abActive) ThemeBerryPrimary else PowerampIconStrong.copy(alpha = 0.4f),
+                                RoundedCornerShape(13.dp)
+                            )
+                            .clickable { controller.cycleAbRepeat() }
+                            .padding(horizontal = 7.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = abLabel,
+                            color = if (controller.abEndMs != null) PowerampOnAccent else if (abActive) ThemeBerryPrimary else PowerampIconStrong,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold.appWeight
+                        )
+                    }
+                    IconButton(
+                        onClick = { controller.cycleRepeatMode() },
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (controller.repeatMode == RepeatMode.REPEAT_SONG || controller.repeatMode == RepeatMode.SINGLE_SONG) {
+                                Icons.Filled.RepeatOne
+                            } else {
+                                Icons.Filled.Repeat
+                            },
+                            contentDescription = "Repeat",
+                            tint = if (isRepeat) ThemeBerryPrimary else PowerampIconStrong,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
             }
 
@@ -895,7 +938,7 @@ private fun EqualizerBandsAndToneSubTab(controller: PowerampController) {
         val badge = buildString {
             append(if (controller.dvcActive) "DVC" else "NO DVC")
             if (controller.eqEnabled) {
-                append(if (parametric) " PEQ ${controller.parametricBands.count { it.enabled }}" else " EQ 10")
+                append(if (parametric) " PEQ ${controller.parametricBands.count { it.enabled }}" else " EQ ${controller.bandFrequenciesHz.size}")
             }
             if (controller.toneEnabled) append(" TON")
             if (controller.limitEnabled) append(" LMT")
@@ -910,12 +953,17 @@ private fun EqualizerBandsAndToneSubTab(controller: PowerampController) {
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF151618))
+                    .background(if (controller.limiterActive) Color(0xFF4A2500) else Color(0xFF151618))
+                    .border(
+                        width = if (controller.limiterActive) 1.5.dp else 0.dp,
+                        color = if (controller.limiterActive) Color(0xFFFF9800) else Color.Transparent,
+                        shape = RoundedCornerShape(10.dp)
+                    )
                     .padding(horizontal = 12.dp, vertical = 3.dp)
             ) {
                 Text(
-                    text = badge,
-                    color = Color(0xFFD2D4D8),
+                    text = if (controller.limiterActive) "$badge · LIMITING" else badge,
+                    color = if (controller.limiterActive) Color(0xFFFFB74D) else Color(0xFFD2D4D8),
                     fontSize = 10.sp,
                     fontWeight = FontWeight.ExtraBold.appWeight,
                     letterSpacing = 0.4.sp
@@ -952,7 +1000,7 @@ private fun EqualizerBandsAndToneSubTab(controller: PowerampController) {
                     }
                 )
                 EqTogglePillButton(
-                    text = "Limit",
+                    text = if (controller.limiterActive) "Limit ●" else "Limit",
                     checked = controller.limitEnabled,
                     onClick = {
                         controller.limitEnabled = !controller.limitEnabled

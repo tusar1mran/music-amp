@@ -3,7 +3,10 @@ package com.musicamp.poweramp
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.os.Build
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -13,7 +16,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -25,6 +31,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 val THEME_MODES = listOf("Poweramp", "Light", "Dark", "Black (OLED)", "Follow system")
 
 const val POWERAMP_GREEN = "Poweramp Green"
+const val MATERIAL_YOU = "Material You"
 
 /** Accent colours: name -> (dark shade, main shade, light shade). */
 val ACCENT_COLORS: LinkedHashMap<String, Triple<Color, Color, Color>> = linkedMapOf(
@@ -43,6 +50,8 @@ object AppTheme {
     var mode by mutableStateOf("Poweramp")
     var accent by mutableStateOf(POWERAMP_GREEN)
     var systemDark by mutableStateOf(false)
+    var dynamicDarkPrimary by mutableStateOf<Color?>(null)
+    var dynamicLightPrimary by mutableStateOf<Color?>(null)
 
     val isDark: Boolean
         get() = when (mode) {
@@ -59,13 +68,23 @@ object AppTheme {
     /** Settings > Look and Feel > Settings Font, one of [SETTINGS_FONTS]. Kept in sync with the controller by [LookAndFeelScope]. */
     var font by mutableStateOf("Bold")
 
-    internal fun accentShades(): Triple<Color, Color, Color> = ACCENT_COLORS[accent] ?: ACCENT_COLORS.getValue(POWERAMP_GREEN)
+    internal fun accentShades(): Triple<Color, Color, Color> {
+        if (accent == MATERIAL_YOU && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val primary = if (isDark) dynamicDarkPrimary else dynamicLightPrimary
+            if (primary != null) {
+                val dark = lerp(primary, Color.Black, 0.30f)
+                val light = lerp(primary, Color.White, 0.25f)
+                return Triple(dark, primary, light)
+            }
+        }
+        return ACCENT_COLORS[accent] ?: ACCENT_COLORS.getValue(POWERAMP_GREEN)
+    }
 }
 
 // ---- Accent colours (names kept from the original design so every screen picks them up) ----
 val ThemeBerryDark: Color get() = AppTheme.accentShades().first
 val ThemeBerryPrimary: Color
-    get() = if (AppTheme.isDark && AppTheme.accent != POWERAMP_GREEN) AppTheme.accentShades().third else AppTheme.accentShades().second
+    get() = if (AppTheme.isDark && AppTheme.accent != POWERAMP_GREEN && AppTheme.accent != MATERIAL_YOU) AppTheme.accentShades().third else AppTheme.accentShades().second
 val ThemeBerryLight: Color get() = AppTheme.accentShades().third
 val ThemeBerryAccent: Color get() = ThemeBerryPrimary
 val ThemeBerryGlow: Color get() = ThemeBerryPrimary.copy(alpha = 0.2f)
@@ -183,7 +202,19 @@ fun AppTextStyleScope(content: @Composable () -> Unit) {
 @Composable
 fun LookAndFeelScope(controller: PowerampController, content: @Composable () -> Unit) {
     val font = controller.settingsFont
-    SideEffect { if (AppTheme.font != font) AppTheme.font = font }
+    val ctx = LocalContext.current
+    // Reading LocalConfiguration ensures recomposition when the system wallpaper/palette changes
+    @Suppress("UNUSED_VARIABLE")
+    val cfg = LocalConfiguration.current
+    SideEffect {
+        if (AppTheme.font != font) AppTheme.font = font
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val d = dynamicDarkColorScheme(ctx).primary
+            val l = dynamicLightColorScheme(ctx).primary
+            if (AppTheme.dynamicDarkPrimary != d) AppTheme.dynamicDarkPrimary = d
+            if (AppTheme.dynamicLightPrimary != l) AppTheme.dynamicLightPrimary = l
+        }
+    }
 
     val view = LocalView.current
     val showStatusBar = controller.showStatusBarOverlay

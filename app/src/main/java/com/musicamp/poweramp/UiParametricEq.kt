@@ -72,7 +72,8 @@ private fun fractionToLog(fraction: Float, min: Float, max: Float): Float =
 private fun formatHz(hz: Float): String =
     if (hz >= 1000f) "%.2f kHz".format(hz / 1000f).replace(".00 ", " ") else "%d Hz".format(hz.toInt())
 
-private val FilterType.isPass: Boolean get() = this == FilterType.LOW_PASS || this == FilterType.HIGH_PASS
+private val FilterType.isPass: Boolean get() =
+    this == FilterType.LOW_PASS || this == FilterType.HIGH_PASS || this == FilterType.BAND_PASS
 
 /**
  * Returns a function that opens the system file picker for an AutoEQ / Equalizer APO "ParametricEQ.txt"
@@ -324,6 +325,32 @@ private fun ParametricBandCard(
                     .clickable { onDelete() }
                     .padding(6.dp)
             )
+        }
+        Row(
+            modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Ch", color = PowerampTextSecondary, fontSize = 10.5.sp, fontWeight = FontWeight.Bold.appWeight)
+            Channel.entries.forEach { ch ->
+                val selected = ch == band.channel
+                Box(
+                    modifier = Modifier
+                        .height(22.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(if (selected) ThemeBerryPrimary else PowerampPillBg)
+                        .clickable { onChange(band.copy(channel = ch)) }
+                        .padding(horizontal = 9.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = ch.label,
+                        color = if (selected) PowerampOnAccent else PowerampTextPrimary,
+                        fontSize = 10.5.sp,
+                        fontWeight = (if (selected) FontWeight.Bold else FontWeight.Medium).appWeight
+                    )
+                }
+            }
         }
         Column {
             PeqSliderRow(

@@ -65,15 +65,29 @@ class SeekableSource private constructor(private val stream: FileInputStream, pr
             return null
         }
 
+        fun openFile(file: File): SeekableSource? = try {
+            if (file.canRead()) SeekableSource(FileInputStream(file)) else null
+        } catch (_: Exception) {
+            null
+        }
     }
 }
 
 object TagReader {
     private const val MAX_BLOCK = 4 * 1024 * 1024
 
+    fun readFile(file: File): TagInfo? {
+        val src = SeekableSource.openFile(file) ?: return null
+        return readFromSource(src)
+    }
+
     fun read(context: Context, track: AudioTrack): TagInfo? {
         if (track.uri?.scheme == "http" || track.uri?.scheme == "https") return null
         val src = SeekableSource.open(context, track) ?: return null
+        return readFromSource(src)
+    }
+
+    private fun readFromSource(src: SeekableSource): TagInfo? {
         return try {
             val head = src.read(0, 12)
             when {

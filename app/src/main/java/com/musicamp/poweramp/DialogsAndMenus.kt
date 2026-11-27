@@ -1,5 +1,11 @@
 package com.musicamp.poweramp
 
+import android.app.Activity
+import android.os.Build
+import android.provider.MediaStore
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Brush
@@ -56,6 +62,8 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.ThumbDown
 import androidx.compose.material.icons.outlined.ThumbUp
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
@@ -378,6 +386,14 @@ private fun PowerampTrackMenuDialogContent(controller: PowerampController) {
                     controller.showTrackActionDialog = false
                     controller.showLyricsScreen = true
                 }
+            }
+            TrackMenuActionButton(
+                icon = Icons.Filled.GraphicEq,
+                label = "Audio Info (Fidelity / DSP)",
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                controller.showTrackActionDialog = false
+                controller.showAudioInfoDialog = true
             }
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -712,12 +728,26 @@ private fun InfoTagField(label: String, value: String, modifier: Modifier = Modi
 @Composable
 private fun PowerampEditTagsDialogContent(controller: PowerampController) {
     val track = controller.actionTargetTrack ?: controller.currentTrack ?: return
+    val context = androidx.compose.ui.platform.LocalContext.current
     var title by remember(track.id) { mutableStateOf(track.title) }
     var artist by remember(track.id) { mutableStateOf(track.artist) }
     var album by remember(track.id) { mutableStateOf(track.album) }
     var genre by remember(track.id) { mutableStateOf(track.genre) }
     var yearStr by remember(track.id) { mutableStateOf(if (track.year > 0) track.year.toString() else "") }
     var lyrics by remember(track.id) { mutableStateOf(track.lyrics) }
+    val writePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        // Pending edit lives in the controller so a rotation while the system dialog is open doesn't lose it
+        val pending = controller.pendingTagSave
+        controller.pendingTagSave = null
+        if (result.resultCode == Activity.RESULT_OK && pending != null) {
+            controller.saveTrackTagsToFile(pending)
+            controller.showEditTagsDialog = false
+        } else {
+            controller.showToast("Cancelled", "File was not modified")
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -771,18 +801,33 @@ private fun PowerampEditTagsDialogContent(controller: PowerampController) {
                         .clip(RoundedCornerShape(19.dp))
                         .background(ThemeBerryPrimary)
                         .clickable {
-                            controller.updateTrack(
-                                track.copy(
-                                    title = title.ifBlank { track.title },
-                                    artist = artist.ifBlank { "Unknown artist" },
-                                    album = album.ifBlank { "Music" },
-                                    genre = genre.ifBlank { "Electronic" },
-                                    year = yearStr.toIntOrNull() ?: track.year,
-                                    lyrics = lyrics
-                                )
+                            val updated = track.copy(
+                                title = title.ifBlank { track.title },
+                                artist = artist.ifBlank { "Unknown artist" },
+                                album = album.ifBlank { "Music" },
+                                genre = genre.ifBlank { "Electronic" },
+                                year = yearStr.toIntOrNull() ?: track.year,
+                                lyrics = lyrics
                             )
-                            controller.showEditTagsDialog = false
-                            controller.showToast("Tags Saved", title)
+                            if (!controller.needsFileWrite(updated)) {
+                                // Saved in the app (CUE, unsupported format, nothing file-side changed, or file in use)
+                                controller.showEditTagsDialog = false
+                            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                                track.uri != null &&
+                                track.uri.scheme == "content"
+                            ) {
+                                try {
+                                    val pi = MediaStore.createWriteRequest(context.contentResolver, listOf(track.uri))
+                                    controller.pendingTagSave = updated
+                                    writePermissionLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+                                } catch (_: Exception) {
+                                    controller.saveTrackTagsToFile(updated)
+                                    controller.showEditTagsDialog = false
+                                }
+                            } else {
+                                controller.saveTrackTagsToFile(updated)
+                                controller.showEditTagsDialog = false
+                            }
                         }
                         .padding(horizontal = 20.dp),
                     contentAlignment = Alignment.Center
@@ -1268,6 +1313,53 @@ private fun PowerampEqPresetBottomSheetContent(controller: PowerampController) {
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
+                            var showAssignMenu by remember(preset.name) { mutableStateOf(false) }
+                            Box {
+                                Text(
+                                    text = "Assign",
+                                    color = ThemeBerryPrimary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold.appWeight,
+                                    modifier = Modifier
+                                        .padding(start = 6.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .border(1.dp, ThemeBerryPrimary.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                                        .clickable { showAssignMenu = true }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                                DropdownMenu(
+                                    expanded = showAssignMenu,
+                                    onDismissRequest = { showAssignMenu = false }
+                                ) {
+                                    val (curOut, curDev) = controller.detectCurrentOutput()
+                                    DropdownMenuItem(
+                                        text = { Text("Assign to ${curOut.label}") },
+                                        onClick = {
+                                            showAssignMenu = false
+                                            controller.assignPresetToCurrentOutput(preset.name)
+                                        }
+                                    )
+                                    if (!curDev.isNullOrBlank() && (curOut == OutputKind.BLUETOOTH || curOut == OutputKind.USB)) {
+                                        DropdownMenuItem(
+                                            text = { Text("Assign to $curDev") },
+                                            onClick = {
+                                                showAssignMenu = false
+                                                controller.assignPresetToCurrentDevice(preset.name)
+                                            }
+                                        )
+                                    }
+                                    val curTrack = controller.currentTrack
+                                    if (curTrack != null) {
+                                        DropdownMenuItem(
+                                            text = { Text("Assign to this song") },
+                                            onClick = {
+                                                showAssignMenu = false
+                                                controller.assignPresetToCurrentTrack(preset.name)
+                                            }
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1590,6 +1682,59 @@ private fun PowerampSettingsOverlayContent(controller: PowerampController) {
 
                     "Audio" -> {
                         item {
+                            SettingChipSelectorRow(
+                                title = "EQ Bands (ISO)",
+                                options = listOf("5", "10", "15", "31"),
+                                selected = controller.graphicBandCount.toString(),
+                                onSelect = { opt ->
+                                    opt.toIntOrNull()?.let { controller.setGraphicBandConfig(it, 31f, 16000f) }
+                                }
+                            )
+                        }
+                        item {
+                            SettingSliderRow(
+                                title = "Custom EQ Band Count",
+                                displayValue = "${controller.graphicBandCount} bands (${controller.graphicStartHz.toInt()} Hz – ${controller.graphicEndHz.toInt()} Hz)",
+                                fraction = ((controller.graphicBandCount - 5) / 27f).coerceIn(0f, 1f),
+                                onFractionChange = { frac ->
+                                    val count = (5 + (frac * 27f).toInt()).coerceIn(5, 32)
+                                    if (count != controller.graphicBandCount) {
+                                        controller.setGraphicBandConfig(count)
+                                    }
+                                }
+                            )
+                        }
+                        item {
+                            // Log scale 20..500 Hz
+                            val lo = kotlin.math.ln(20f); val hi = kotlin.math.ln(500f)
+                            SettingSliderRow(
+                                title = "Custom EQ Start Frequency",
+                                displayValue = "${controller.graphicStartHz.toInt()} Hz",
+                                fraction = ((kotlin.math.ln(controller.graphicStartHz) - lo) / (hi - lo)).coerceIn(0f, 1f),
+                                onFractionChange = { frac ->
+                                    val hz = kotlin.math.exp(lo + frac * (hi - lo))
+                                    if (kotlin.math.abs(hz - controller.graphicStartHz) >= 1f) {
+                                        controller.setGraphicBandConfig(controller.graphicBandCount, hz, controller.graphicEndHz)
+                                    }
+                                }
+                            )
+                        }
+                        item {
+                            // Log scale 2..20 kHz
+                            val lo = kotlin.math.ln(2000f); val hi = kotlin.math.ln(20000f)
+                            SettingSliderRow(
+                                title = "Custom EQ End Frequency",
+                                displayValue = "${controller.graphicEndHz.toInt()} Hz",
+                                fraction = ((kotlin.math.ln(controller.graphicEndHz) - lo) / (hi - lo)).coerceIn(0f, 1f),
+                                onFractionChange = { frac ->
+                                    val hz = kotlin.math.exp(lo + frac * (hi - lo))
+                                    if (kotlin.math.abs(hz - controller.graphicEndHz) >= 10f) {
+                                        controller.setGraphicBandConfig(controller.graphicBandCount, controller.graphicStartHz, hz)
+                                    }
+                                }
+                            )
+                        }
+                        item {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1853,10 +1998,27 @@ private fun PowerampSettingsOverlayContent(controller: PowerampController) {
                         }
                         item {
                             SettingToggleRow(
+                                title = "Download on Wi-Fi only",
+                                subtitle = "Skip cover art downloads on metered mobile networks",
+                                checked = controller.albumArtWifiOnly,
+                                onCheckedChange = { controller.albumArtWifiOnly = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
                                 title = "Album Art on Lock Screen",
                                 subtitle = "Show cover on lockscreen with media controls",
                                 checked = controller.albumArtOnLockscreen,
                                 onCheckedChange = { controller.albumArtOnLockscreen = it }
+                            )
+                        }
+                        item {
+                            SettingToggleRow(
+                                title = "Full-screen Lockscreen Player",
+                                subtitle = "Shows a full-screen player over the lock screen when you lock the phone with MusicAmp open. " +
+                                    "Android doesn't let apps open it from the background, so locking from another app shows the normal lock screen.",
+                                checked = controller.lockscreenPlayerEnabled,
+                                onCheckedChange = { controller.lockscreenPlayerEnabled = it }
                             )
                         }
                         item {
@@ -1899,6 +2061,47 @@ private fun PowerampSettingsOverlayContent(controller: PowerampController) {
                                 checked = controller.autoScanOnStartup,
                                 onCheckedChange = { controller.autoScanOnStartup = it }
                             )
+                        }
+                        item {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(PowerampDialogBg)
+                                    .padding(14.dp)
+                            ) {
+                                Text("Tag Separators", color = PowerampTextPrimary, fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold.appWeight)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    "Split multi-value Artist, Genre and Composer tags for library grouping without changing track display text",
+                                    color = PowerampTextSecondary,
+                                    fontSize = 12.sp
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    val allSeps = listOf(";" to ";", "/" to "/", " feat. " to "feat.", ", " to ", ")
+                                    items(allSeps) { (sep, label) ->
+                                        val active = sep in controller.tagSeparators
+                                        Box(
+                                            modifier = Modifier
+                                                .height(30.dp)
+                                                .clip(RoundedCornerShape(15.dp))
+                                                .background(if (active) ThemeBerryPrimary else PowerampPillBg)
+                                                .border(1.dp, if (active) ThemeBerryPrimary else PowerampBorderGray, RoundedCornerShape(15.dp))
+                                                .clickable { controller.toggleTagSeparator(sep) }
+                                                .padding(horizontal = 12.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = label,
+                                                color = if (active) PowerampOnAccent else PowerampTextPrimary,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold.appWeight
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                         item {
                             Text("EXTRA FOLDERS (DSD, .CUE, .LRC)", color = ThemeBerryPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold.appWeight)
@@ -2002,6 +2205,90 @@ private fun PowerampSettingsOverlayContent(controller: PowerampController) {
                                 onCheckedChange = { controller.bluetoothDvcEnabled = it }
                             )
                         }
+                        item {
+                            Text(
+                                text = "EQ PRESET ASSIGNMENTS",
+                                color = PowerampTextSecondary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold.appWeight,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            )
+                            val hasAny = controller.presetForOutput.isNotEmpty() ||
+                                controller.presetForDevice.isNotEmpty() ||
+                                controller.presetForTrack.isNotEmpty()
+                            if (!hasAny) {
+                                Text(
+                                    text = "No EQ presets assigned yet. Use Assign in the EQ Presets sheet.",
+                                    color = PowerampTextSecondary,
+                                    fontSize = 13.sp,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                        items(controller.presetForOutput.entries.toList()) { (kind, presetName) ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(kind.label, color = PowerampTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold.appWeight)
+                                    Text("Output → $presetName", color = PowerampTextSecondary, fontSize = 12.sp)
+                                }
+                                Text(
+                                    text = "Remove",
+                                    color = ThemeBerryPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold.appWeight,
+                                    modifier = Modifier.clickable { controller.presetForOutput.remove(kind) }
+                                )
+                            }
+                        }
+                        items(controller.presetForDevice.entries.toList()) { (devName, presetName) ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(devName, color = PowerampTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold.appWeight)
+                                    Text("Device → $presetName", color = PowerampTextSecondary, fontSize = 12.sp)
+                                }
+                                Text(
+                                    text = "Remove",
+                                    color = ThemeBerryPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold.appWeight,
+                                    modifier = Modifier.clickable { controller.presetForDevice.remove(devName) }
+                                )
+                            }
+                        }
+                        items(controller.presetForTrack.entries.toList()) { (trackId, presetName) ->
+                            val trackTitle = controller.allTracks.firstOrNull { it.id == trackId }?.title ?: "Track #$trackId"
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(trackTitle, color = PowerampTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold.appWeight)
+                                    Text("Song → $presetName", color = PowerampTextSecondary, fontSize = 12.sp)
+                                }
+                                Text(
+                                    text = "Remove",
+                                    color = ThemeBerryPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold.appWeight,
+                                    modifier = Modifier.clickable { controller.presetForTrack.remove(trackId) }
+                                )
+                            }
+                        }
                     }
 
                     "Misc" -> {
@@ -2012,6 +2299,51 @@ private fun PowerampSettingsOverlayContent(controller: PowerampController) {
                                 checked = controller.androidAutoEnabled,
                                 onCheckedChange = { controller.androidAutoEnabled = it }
                             )
+                        }
+                        item {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(PowerampDialogBg)
+                                    .padding(14.dp)
+                            ) {
+                                Text(
+                                    "Notification & Android Auto Buttons (${controller.notificationActions.size}/6)",
+                                    color = PowerampTextPrimary,
+                                    fontSize = 15.5.sp,
+                                    fontWeight = FontWeight.SemiBold.appWeight
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    "Choose up to 6 actions for the playback notification and Android Auto. Compact view keeps Previous / Play / Next.",
+                                    color = PowerampTextSecondary,
+                                    fontSize = 12.sp
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    items(MediaButtonAction.entries) { action ->
+                                        val active = action in controller.notificationActions
+                                        Box(
+                                            modifier = Modifier
+                                                .height(30.dp)
+                                                .clip(RoundedCornerShape(15.dp))
+                                                .background(if (active) ThemeBerryPrimary else PowerampPillBg)
+                                                .border(1.dp, if (active) ThemeBerryPrimary else PowerampBorderGray, RoundedCornerShape(15.dp))
+                                                .clickable { controller.toggleNotificationAction(action) }
+                                                .padding(horizontal = 12.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = action.label,
+                                                color = if (active) PowerampOnAccent else PowerampTextPrimary,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold.appWeight
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                         item {
                             SettingToggleRow(
@@ -2403,7 +2735,15 @@ private fun AccentColorPickerRow(selected: String, onSelect: (String) -> Unit) {
         Text(selected, color = PowerampTextSecondary, fontSize = 12.sp)
         Spacer(modifier = Modifier.height(10.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(ACCENT_COLORS.entries.toList()) { (name, shades) ->
+            val entries = buildList {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val dyn = (if (AppTheme.isDark) AppTheme.dynamicDarkPrimary else AppTheme.dynamicLightPrimary)
+                        ?: Color(0xFF6750A4)
+                    add(MATERIAL_YOU to Triple(dyn, dyn, dyn))
+                }
+                addAll(ACCENT_COLORS.entries.map { it.key to it.value })
+            }
+            items(entries) { (name, shades) ->
                 val isSelected = name == selected
                 Box(
                     modifier = Modifier

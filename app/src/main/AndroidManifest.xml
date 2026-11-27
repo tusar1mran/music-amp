@@ -2,6 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
@@ -43,6 +44,14 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".LockscreenActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:showWhenLocked="true"
+            />
+
         <!-- Exported so media browsers (Android Auto, car head units, Bluetooth) can bind to it -->
         <service
             android:name=".PlaybackService"
@@ -56,13 +65,37 @@
         <receiver
             android:name=".MusicAmpWidget"
             android:exported="false"
-            android:label="MusicAmp">
+            android:label="MusicAmp (4×1)">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/musicamp_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".MusicAmpWidget4x2"
+            android:exported="false"
+            android:label="MusicAmp (4×2)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/musicamp_widget_4x2_info" />
+        </receiver>
+
+        <receiver
+            android:name=".MusicAmpWidget2x2"
+            android:exported="false"
+            android:label="MusicAmp (2×2)">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/musicamp_widget_2x2_info" />
         </receiver>
     </application>
 

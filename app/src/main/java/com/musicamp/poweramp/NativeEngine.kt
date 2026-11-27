@@ -231,6 +231,10 @@ class NativeEngine(
 ) : PlayerEngine() {
 
     override val isNative = true
+    override val isLimiting: Boolean get() = dsp?.limiting == true
+    override val peakLevel: Float get() = dsp?.peakLevel ?: 0f
+    override val outputEncoding: Int get() = plan?.encoding ?: AudioFormat.ENCODING_PCM_16BIT
+    override val isBitPerfectOutput: Boolean get() = plan?.bitPerfect == true
 
     private var source: PcmSource? = null
     private var track: AudioTrack? = null

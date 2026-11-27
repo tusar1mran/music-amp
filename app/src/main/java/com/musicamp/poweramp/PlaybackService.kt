@@ -4,8 +4,10 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.drawable.Icon
@@ -60,6 +62,39 @@ class PlaybackService : MediaBrowserService() {
     private var artTrackId = -2L
     private var dvcProvider: VolumeProvider? = null
     private lateinit var controller: PowerampController
+    private var screenOffRegistered = false
+    private val screenOffReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_OFF &&
+                controller.isPlaying &&
+                controller.lockscreenPlayerEnabled
+            ) {
+                try {
+                    startActivity(
+                        Intent(this@PlaybackService, LockscreenActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    )
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
+    private fun updateScreenOffReceiver(active: Boolean) {
+        if (active && !screenOffRegistered) {
+            try {
+                registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
+                screenOffRegistered = true
+            } catch (_: Exception) {
+            }
+        } else if (!active && screenOffRegistered) {
+            try {
+                unregisterReceiver(screenOffReceiver)
+            } catch (_: Exception) {
+            }
+            screenOffRegistered = false
+        }
+    }
 
     private val localAttributes: AudioAttributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -98,6 +133,17 @@ class PlaybackService : MediaBrowserService() {
                 override fun onPlayFromSearch(query: String?, extras: Bundle?) {
                     playFromSearch(query, extras)
                 }
+
+                override fun onCustomAction(action: String, extras: Bundle?) {
+                    when (action) {
+                        ACTION_SHUFFLE -> controller.cycleShuffleMode()
+                        ACTION_REPEAT -> controller.cycleRepeatMode()
+                        ACTION_LIKE -> controller.toggleLikeCurrentTrack()
+                        ACTION_REWIND_10 -> controller.seekRelative(-10_000L)
+                        ACTION_FORWARD_10 -> controller.seekRelative(10_000L)
+                    }
+                    scope.launch { if (session != null) render(currentSnap()) }
+                }
             })
             s.setPlaybackToLocal(localAttributes)
             s.isActive = true
@@ -111,6 +157,18 @@ class PlaybackService : MediaBrowserService() {
         collectJob = scope.launch {
             snapshotFlow { currentSnap() }.collect { render(it) }
         }
+        // Keep the widgets' progress bars moving while playing (push() skips updates under 1% change)
+        scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(2000L)
+                if (!controller.isPlaying) continue
+                val d = controller.durationMs
+                if (d <= 0L) continue
+                val t = controller.currentTrack ?: continue
+                val progress = ((controller.currentPositionMs.toFloat() / d) * 1000f).toInt().coerceIn(0, 1000)
+                MusicAmpWidget.push(this@PlaybackService, t.title, t.artist, true, art, progress)
+            }
+        }
         // Direct Volume Control: route volume keys to the app's software volume while it is active
         scope.launch {
             snapshotFlow { controller.dvcActive }.collect { applyVolumeHandling(it) }
@@ -118,6 +176,11 @@ class PlaybackService : MediaBrowserService() {
         scope.launch {
             snapshotFlow { controller.volumePercent }.collect { v ->
                 dvcProvider?.currentVolume = v.coerceIn(0, 100)
+            }
+        }
+        scope.launch {
+            snapshotFlow { controller.isPlaying && controller.lockscreenPlayerEnabled }.collect { active ->
+                updateScreenOffReceiver(active)
             }
         }
     }
@@ -179,7 +242,10 @@ class PlaybackService : MediaBrowserService() {
         }
         val lockscreenArt = if (controller.albumArtOnLockscreen) art else null
 
-        MusicAmpWidget.push(this, snap.title, snap.artist, snap.playing, art)
+        val progress = if (snap.durationMs > 0L) {
+            ((controller.currentPositionMs.toFloat() / snap.durationMs) * 1000f).toInt().coerceIn(0, 1000)
+        } else 0
+        MusicAmpWidget.push(this, snap.title, snap.artist, snap.playing, art, progress)
 
         val s = session ?: return
         s.setMetadata(
@@ -195,16 +261,35 @@ class PlaybackService : MediaBrowserService() {
             PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SEEK_TO or
             PlaybackState.ACTION_FAST_FORWARD or PlaybackState.ACTION_REWIND or PlaybackState.ACTION_STOP or
             PlaybackState.ACTION_PLAY_FROM_MEDIA_ID or PlaybackState.ACTION_PLAY_FROM_SEARCH
-        s.setPlaybackState(
-            PlaybackState.Builder()
-                .setActions(actions)
-                .setState(
-                    if (snap.playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
-                    controller.currentPositionMs,
-                    if (snap.playing) 1f else 0f
+        val stateBuilder = PlaybackState.Builder()
+            .setActions(actions)
+            .setState(
+                if (snap.playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
+                controller.currentPositionMs,
+                if (snap.playing) 1f else 0f
+            )
+        // Custom actions for Android Auto / system media surfaces
+        controller.notificationActions.take(6).forEach { btn ->
+            when (btn) {
+                MediaButtonAction.SHUFFLE -> stateBuilder.addCustomAction(
+                    PlaybackState.CustomAction.Builder(ACTION_SHUFFLE, "Shuffle", R.drawable.widget_ic_shuffle).build()
                 )
-                .build()
-        )
+                MediaButtonAction.REPEAT -> stateBuilder.addCustomAction(
+                    PlaybackState.CustomAction.Builder(ACTION_REPEAT, "Repeat", R.drawable.widget_ic_repeat).build()
+                )
+                MediaButtonAction.LIKE -> stateBuilder.addCustomAction(
+                    PlaybackState.CustomAction.Builder(ACTION_LIKE, "Like", android.R.drawable.btn_star_big_on).build()
+                )
+                MediaButtonAction.REWIND_10 -> stateBuilder.addCustomAction(
+                    PlaybackState.CustomAction.Builder(ACTION_REWIND_10, "Rewind 10s", android.R.drawable.ic_media_rew).build()
+                )
+                MediaButtonAction.FORWARD_10 -> stateBuilder.addCustomAction(
+                    PlaybackState.CustomAction.Builder(ACTION_FORWARD_10, "Forward 10s", android.R.drawable.ic_media_ff).build()
+                )
+                else -> {}
+            }
+        }
+        s.setPlaybackState(stateBuilder.build())
 
         if (snap.playing) {
             promoteToForeground(buildNotification(snap, lockscreenArt))
@@ -253,6 +338,10 @@ class PlaybackService : MediaBrowserService() {
         fun action(icon: Int, label: String, pi: PendingIntent) =
             Notification.Action.Builder(Icon.createWithResource(this, icon), label, pi).build()
 
+        val chosen = controller.notificationActions.toList().ifEmpty {
+            listOf(MediaButtonAction.PREVIOUS, MediaButtonAction.PLAY_PAUSE, MediaButtonAction.NEXT)
+        }.take(6)
+
         val b = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_music)
             .setContentTitle(snap.title.ifBlank { "MusicAmp" })
@@ -264,17 +353,36 @@ class PlaybackService : MediaBrowserService() {
             .setShowWhen(false)
             .setOnlyAlertOnce(true)
             .setOngoing(snap.playing)
-            .addAction(action(android.R.drawable.ic_media_previous, "Previous", servicePi(ACTION_PREV, 1)))
-            .addAction(
-                if (snap.playing) action(android.R.drawable.ic_media_pause, "Pause", servicePi(ACTION_TOGGLE, 2))
-                else action(android.R.drawable.ic_media_play, "Play", servicePi(ACTION_TOGGLE, 2))
-            )
-            .addAction(action(android.R.drawable.ic_media_next, "Next", servicePi(ACTION_NEXT, 3)))
-            .setStyle(
-                Notification.MediaStyle()
-                    .setMediaSession(session?.sessionToken)
-                    .setShowActionsInCompactView(0, 1, 2)
-            )
+
+        chosen.forEach { btn ->
+            val act = when (btn) {
+                MediaButtonAction.PREVIOUS -> action(android.R.drawable.ic_media_previous, "Previous", servicePi(ACTION_PREV, 1))
+                MediaButtonAction.PLAY_PAUSE -> if (snap.playing) {
+                    action(android.R.drawable.ic_media_pause, "Pause", servicePi(ACTION_TOGGLE, 2))
+                } else {
+                    action(android.R.drawable.ic_media_play, "Play", servicePi(ACTION_TOGGLE, 2))
+                }
+                MediaButtonAction.NEXT -> action(android.R.drawable.ic_media_next, "Next", servicePi(ACTION_NEXT, 3))
+                MediaButtonAction.SHUFFLE -> action(R.drawable.widget_ic_shuffle, "Shuffle", servicePi(ACTION_SHUFFLE, 5))
+                MediaButtonAction.REPEAT -> action(R.drawable.widget_ic_repeat, "Repeat", servicePi(ACTION_REPEAT, 6))
+                MediaButtonAction.LIKE -> action(android.R.drawable.btn_star_big_on, "Like", servicePi(ACTION_LIKE, 7))
+                MediaButtonAction.REWIND_10 -> action(android.R.drawable.ic_media_rew, "Rewind 10s", servicePi(ACTION_REWIND_10, 8))
+                MediaButtonAction.FORWARD_10 -> action(android.R.drawable.ic_media_ff, "Forward 10s", servicePi(ACTION_FORWARD_10, 9))
+            }
+            b.addAction(act)
+        }
+
+        val compactIndices = listOf(
+            chosen.indexOf(MediaButtonAction.PREVIOUS),
+            chosen.indexOf(MediaButtonAction.PLAY_PAUSE),
+            chosen.indexOf(MediaButtonAction.NEXT)
+        ).filter { it >= 0 }.ifEmpty { chosen.indices.take(3).toList() }.toIntArray()
+
+        b.setStyle(
+            Notification.MediaStyle()
+                .setMediaSession(session?.sessionToken)
+                .setShowActionsInCompactView(*compactIndices)
+        )
         largeIcon?.let { b.setLargeIcon(it) }
         return b.build()
     }
@@ -304,6 +412,11 @@ class PlaybackService : MediaBrowserService() {
             ACTION_TOGGLE -> controller.togglePlayPause()
             ACTION_NEXT -> controller.nextTrack()
             ACTION_PREV -> controller.previousTrack()
+            ACTION_SHUFFLE -> controller.cycleShuffleMode()
+            ACTION_REPEAT -> controller.cycleRepeatMode()
+            ACTION_LIKE -> controller.toggleLikeCurrentTrack()
+            ACTION_REWIND_10 -> controller.seekRelative(-10_000L)
+            ACTION_FORWARD_10 -> controller.seekRelative(10_000L)
             ACTION_DISMISSED -> if (!controller.isPlaying) stopSelf()
         }
         // Re-render after the action so a no-op (e.g. empty library) still leaves the foreground state
@@ -492,6 +605,7 @@ class PlaybackService : MediaBrowserService() {
         }
         session = null
         dvcProvider = null
+        updateScreenOffReceiver(false)
         stopForeground(STOP_FOREGROUND_REMOVE)
         // Leave the widget showing the last track, paused
         val last = currentSnap()
@@ -505,6 +619,11 @@ class PlaybackService : MediaBrowserService() {
         internal const val ACTION_TOGGLE = "com.musicamp.poweramp.TOGGLE"
         internal const val ACTION_NEXT = "com.musicamp.poweramp.NEXT"
         internal const val ACTION_PREV = "com.musicamp.poweramp.PREV"
+        internal const val ACTION_SHUFFLE = "com.musicamp.poweramp.SHUFFLE"
+        internal const val ACTION_REPEAT = "com.musicamp.poweramp.REPEAT"
+        internal const val ACTION_LIKE = "com.musicamp.poweramp.LIKE"
+        internal const val ACTION_REWIND_10 = "com.musicamp.poweramp.REWIND_10"
+        internal const val ACTION_FORWARD_10 = "com.musicamp.poweramp.FORWARD_10"
         private const val ACTION_DISMISSED = "com.musicamp.poweramp.DISMISSED"
         /** Set on intents delivered via startForegroundService(), which must call startForeground() promptly. */
         internal const val EXTRA_FOREGROUND_START = "com.musicamp.poweramp.extra.FOREGROUND_START"

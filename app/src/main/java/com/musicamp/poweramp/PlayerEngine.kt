@@ -44,6 +44,14 @@ abstract class PlayerEngine {
     abstract val sampleRate: Int?
     /** One line describing the decode/output path for the status card. */
     abstract val description: String
+    /** True when the DSP limiter actively attenuated the last buffer. */
+    open val isLimiting: Boolean get() = false
+    /** Peak linear amplitude from the last processed buffer. */
+    open val peakLevel: Float get() = 0f
+    /** Output AudioFormat encoding (e.g. ENCODING_PCM_FLOAT / 24BIT / 16BIT). */
+    open val outputEncoding: Int get() = android.media.AudioFormat.ENCODING_PCM_16BIT
+    /** True when outputting bit-perfect (no DSP or Android mixing). */
+    open val isBitPerfectOutput: Boolean get() = false
 
     protected val main = Handler(Looper.getMainLooper())
     protected fun postCompletion() = main.post { onCompletion?.invoke(this) }

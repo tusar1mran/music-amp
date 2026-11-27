@@ -4,8 +4,10 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
+import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.pow
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -15,7 +17,8 @@ enum class FilterType(val label: String, val autoEqCode: String) {
     LOW_SHELF("Low shelf", "LSC"),
     HIGH_SHELF("High shelf", "HSC"),
     LOW_PASS("Low pass", "LPQ"),
-    HIGH_PASS("High pass", "HPQ");
+    HIGH_PASS("High pass", "HPQ"),
+    BAND_PASS("Band pass", "BP");
 
     companion object {
         fun fromAutoEq(code: String): FilterType? = when (code.uppercase()) {
@@ -24,9 +27,16 @@ enum class FilterType(val label: String, val autoEqCode: String) {
             "HS", "HSC", "HIGHSHELF" -> HIGH_SHELF
             "LP", "LPQ" -> LOW_PASS
             "HP", "HPQ" -> HIGH_PASS
+            "BP", "BPF", "BANDPASS" -> BAND_PASS
             else -> null
         }
     }
+}
+
+enum class Channel(val label: String) {
+    BOTH("L+R"),
+    LEFT("L"),
+    RIGHT("R")
 }
 
 /** One band of the parametric equalizer. */
@@ -35,7 +45,8 @@ data class ParametricBand(
     val freqHz: Float = 1000f, // 20..20000
     val gainDb: Float = 0f,    // -24..24 (ignored by pass filters)
     val q: Float = 0.71f,      // 0.1..10
-    val enabled: Boolean = true
+    val enabled: Boolean = true,
+    val channel: Channel = Channel.BOTH
 )
 
 /**
@@ -47,6 +58,7 @@ data class DspConfig(
     val preampDb: Float = 0f,
     val graphicEnabled: Boolean = false,
     val graphicGainsDb: List<Float> = List(10) { 0f },
+    val graphicFreqsHz: List<Float> = ISO_10_BAND_HZ,
     val parametricEnabled: Boolean = false,
     val parametricBands: List<ParametricBand> = emptyList(),
     val bassDb: Float = 0f,
@@ -64,7 +76,78 @@ data class ReverbParams(
     val preDelay: Float, val preDelayMix: Float, val mix: Float
 )
 
-val GRAPHIC_BAND_HZ = floatArrayOf(31f, 62f, 125f, 250f, 500f, 1000f, 2000f, 4000f, 8000f, 16000f)
+val ISO_5_BAND_HZ = listOf(60f, 230f, 910f, 3600f, 14000f)
+val ISO_10_BAND_HZ = listOf(31f, 62f, 125f, 250f, 500f, 1000f, 2000f, 4000f, 8000f, 16000f)
+val ISO_15_BAND_HZ = listOf(25f, 40f, 63f, 100f, 160f, 250f, 400f, 630f, 1000f, 1600f, 2500f, 4000f, 6300f, 10000f, 16000f)
+val ISO_31_BAND_HZ = listOf(
+    20f, 25f, 31.5f, 40f, 50f, 63f, 80f, 100f, 125f, 160f,
+    200f, 250f, 315f, 400f, 500f, 630f, 800f, 1000f, 1250f, 1600f,
+    2000f, 2500f, 3150f, 4000f, 5000f, 6300f, 8000f, 10000f, 12500f, 16000f, 20000f
+)
+val GRAPHIC_BAND_HZ = ISO_10_BAND_HZ.toFloatArray()
+
+/** Log-spaced frequencies from [startHz] to [endHz] for custom N-band graphic EQ (5..32). */
+fun logSpacedBands(count: Int, startHz: Float = 31f, endHz: Float = 16000f): List<Float> {
+    val n = count.coerceIn(5, 32)
+    val lo = startHz.coerceIn(20f, 500f)
+    val hi = endHz.coerceIn(lo * 2f, 20000f)
+    if (n == 1) return listOf(lo)
+    val logLo = ln(lo.toDouble())
+    val logHi = ln(hi.toDouble())
+    return List(n) { i ->
+        exp(logLo + (logHi - logLo) * i / (n - 1)).toFloat()
+    }
+}
+
+fun isoOrCustomBands(count: Int, startHz: Float = 31f, endHz: Float = 16000f): List<Float> {
+    val defaultSpan = abs(startHz - 31f) < 1f && abs(endHz - 16000f) < 1f
+    if (defaultSpan) {
+        when (count) {
+            5 -> return ISO_5_BAND_HZ
+            10 -> return ISO_10_BAND_HZ
+            15 -> return ISO_15_BAND_HZ
+            31 -> return ISO_31_BAND_HZ
+        }
+    }
+    return logSpacedBands(count, startHz, endHz)
+}
+
+fun formatFreqLabel(hz: Float): String = when {
+    hz >= 1000f -> {
+        val k = hz / 1000f
+        if (abs(k - k.roundToInt()) < 0.05f) "${k.roundToInt()}K" else "%.1fK".format(k)
+    }
+    else -> hz.roundToInt().toString()
+}
+
+/** Log-frequency linear interpolation of an EQ curve onto [dstFreqs]. */
+fun resampleEqCurve(srcFreqs: List<Float>, srcGains: List<Float>, dstFreqs: List<Float>): List<Float> {
+    if (srcFreqs.isEmpty() || srcGains.isEmpty()) return List(dstFreqs.size) { 0f }
+    val n = minOf(srcFreqs.size, srcGains.size)
+    if (n == 1) return List(dstFreqs.size) { srcGains[0] }
+    return dstFreqs.map { hz ->
+        if (hz <= srcFreqs[0]) return@map srcGains[0]
+        if (hz >= srcFreqs[n - 1]) return@map srcGains[n - 1]
+        var lo = 0
+        while (lo < n - 2 && srcFreqs[lo + 1] < hz) lo++
+        val f0 = srcFreqs[lo].coerceAtLeast(1f)
+        val f1 = srcFreqs[lo + 1].coerceAtLeast(f0 + 0.01f)
+        val t = (ln(hz / f0) / ln(f1 / f0)).coerceIn(0f, 1f)
+        srcGains[lo] * (1f - t) + srcGains[lo + 1] * t
+    }
+}
+
+/** Smooth-summing Q for graphic EQ band [index]: Q = sqrt(2^bw) / (2^bw - 1). */
+fun graphicBandQ(freqs: List<Float>, index: Int): Float {
+    if (freqs.size < 2) return 1.41f
+    val bw = when {
+        index <= 0 -> ln((freqs[1] / freqs[0]).coerceAtLeast(1.05f)) / ln(2f)
+        index >= freqs.lastIndex -> ln((freqs[index] / freqs[index - 1]).coerceAtLeast(1.05f)) / ln(2f)
+        else -> ln((freqs[index + 1] / freqs[index - 1]).coerceAtLeast(1.1f)) / (2f * ln(2f))
+    }.coerceIn(0.15f, 3.0f)
+    val twoBw = 2.0.pow(bw.toDouble())
+    return (sqrt(twoBw) / (twoBw - 1.0)).toFloat().coerceIn(0.5f, 8.0f)
+}
 
 /** RBJ cookbook biquad, transposed direct form II, stereo state. */
 class Biquad {
@@ -102,6 +185,11 @@ class Biquad {
                 nb0 = (1 + cw) / 2; nb1 = -(1 + cw); nb2 = (1 + cw) / 2
                 na0 = 1 + alpha; na1 = -2 * cw; na2 = 1 - alpha
             }
+            FilterType.BAND_PASS -> {
+                // RBJ cookbook constant 0 dB peak gain band-pass filter
+                nb0 = alpha; nb1 = 0.0; nb2 = -alpha
+                na0 = 1 + alpha; na1 = -2 * cw; na2 = 1 - alpha
+            }
         }
         b0 = nb0 / na0; b1 = nb1 / na0; b2 = nb2 / na0; a1 = na1 / na0; a2 = na2 / na0
     }
@@ -124,6 +212,34 @@ class Biquad {
         }
         // Flush denormals
         z1L = if (abs(l1) < 1e-20) 0.0 else l1; z2L = if (abs(l2) < 1e-20) 0.0 else l2
+        z1R = if (abs(r1) < 1e-20) 0.0 else r1; z2R = if (abs(r2) < 1e-20) 0.0 else r2
+    }
+
+    fun processLeft(buf: FloatArray, frames: Int) {
+        var l1 = z1L; var l2 = z2L
+        var i = 0
+        for (n in 0 until frames) {
+            val xl = buf[i].toDouble()
+            val yl = b0 * xl + l1
+            l1 = b1 * xl - a1 * yl + l2
+            l2 = b2 * xl - a2 * yl
+            buf[i] = yl.toFloat()
+            i += 2
+        }
+        z1L = if (abs(l1) < 1e-20) 0.0 else l1; z2L = if (abs(l2) < 1e-20) 0.0 else l2
+    }
+
+    fun processRight(buf: FloatArray, frames: Int) {
+        var r1 = z1R; var r2 = z2R
+        var i = 1
+        for (n in 0 until frames) {
+            val xr = buf[i].toDouble()
+            val yr = b0 * xr + r1
+            r1 = b1 * xr - a1 * yr + r2
+            r2 = b2 * xr - a2 * yr
+            buf[i] = yr.toFloat()
+            i += 2
+        }
         z1R = if (abs(r1) < 1e-20) 0.0 else r1; z2R = if (abs(r2) < 1e-20) 0.0 else r2
     }
 }
@@ -209,9 +325,9 @@ class Reverb(fs: Int) {
  */
 class DspProcessor(private val fs: Int) {
     private var config: DspConfig? = null
-    private val graphic = Array(10) { Biquad() }
+    private var graphic: Array<Biquad> = Array(10) { Biquad() }
     private var graphicActive = BooleanArray(10)
-    private var parametric: List<Biquad> = emptyList()
+    private var parametric: List<Pair<Biquad, Channel>> = emptyList()
     private val bass = Biquad(); private val treble = Biquad()
     private var reverb: Reverb? = null
     private var staticGain = 1f
@@ -224,21 +340,30 @@ class DspProcessor(private val fs: Int) {
     /** Player volume (balance, crossfade, ducking), linear 0..1, set from the controller thread. */
     @Volatile var volL = 1f
     @Volatile var volR = 1f
+    /** True when the limiter reduced gain (< 0.99) in the last processed buffer. */
+    @Volatile var limiting = false
+    /** Peak linear amplitude seen in the last processed buffer (0..1+). */
+    @Volatile var peakLevel = 0f
 
     fun update(c: DspConfig) {
         if (c == config) return
         val old = config
         config = c
-        if (old == null || old.graphicGainsDb != c.graphicGainsDb || old.graphicEnabled != c.graphicEnabled) {
-            for (b in 0 until 10) {
+        if (old == null || old.graphicGainsDb != c.graphicGainsDb || old.graphicFreqsHz != c.graphicFreqsHz || old.graphicEnabled != c.graphicEnabled) {
+            val freqs = c.graphicFreqsHz.ifEmpty { ISO_10_BAND_HZ }
+            if (graphic.size != freqs.size) {
+                graphic = Array(freqs.size) { Biquad() }
+                graphicActive = BooleanArray(freqs.size)
+            }
+            for (b in freqs.indices) {
                 val g = if (c.graphicEnabled) c.graphicGainsDb.getOrElse(b) { 0f } else 0f
                 graphicActive[b] = abs(g) > 0.01f
-                graphic[b].set(FilterType.PEAK, fs, GRAPHIC_BAND_HZ[b], g, 1.41f)
+                graphic[b].set(FilterType.PEAK, fs, freqs[b], g, graphicBandQ(freqs, b))
             }
         }
         if (old == null || old.parametricBands != c.parametricBands || old.parametricEnabled != c.parametricEnabled) {
             parametric = if (c.parametricEnabled) c.parametricBands.filter { it.enabled }.map { pb ->
-                Biquad().also { it.set(pb.type, fs, pb.freqHz, pb.gainDb, pb.q) }
+                Biquad().also { it.set(pb.type, fs, pb.freqHz, pb.gainDb, pb.q) } to pb.channel
             } else emptyList()
         }
         if (old == null || old.bassDb != c.bassDb) bass.set(FilterType.LOW_SHELF, fs, 150f, c.bassDb, 0.71f)
@@ -253,11 +378,21 @@ class DspProcessor(private val fs: Int) {
 
     fun process(buf: FloatArray, frames: Int) {
         val c = config ?: DspConfig()
-        if (c.bypass) return
+        if (c.bypass) {
+            limiting = false
+            peakLevel = 0f
+            return
+        }
         staticGain = dbToLin(c.preampDb + trackGainDb)
         if (staticGain != 1f) for (i in 0 until frames * 2) buf[i] *= staticGain
-        if (c.graphicEnabled) for (b in 0 until 10) if (graphicActive[b]) graphic[b].processStereo(buf, frames)
-        for (bq in parametric) bq.processStereo(buf, frames)
+        if (c.graphicEnabled) for (b in graphic.indices) if (graphicActive[b]) graphic[b].processStereo(buf, frames)
+        for ((bq, ch) in parametric) {
+            when (ch) {
+                Channel.BOTH -> bq.processStereo(buf, frames)
+                Channel.LEFT -> bq.processLeft(buf, frames)
+                Channel.RIGHT -> bq.processRight(buf, frames)
+            }
+        }
         if (abs(c.bassDb) > 0.01f) bass.processStereo(buf, frames)
         if (abs(c.trebleDb) > 0.01f) treble.processStereo(buf, frames)
         if (c.mono) {
@@ -283,7 +418,14 @@ class DspProcessor(private val fs: Int) {
             buf[i] *= curL; buf[i + 1] *= curR
             i += 2
         }
-        if (c.limiter) limit(buf, frames)
+        if (c.limiter) {
+            limit(buf, frames)
+        } else {
+            limiting = false
+            var p = 0f
+            for (k in 0 until frames * 2) p = max(p, abs(buf[k]))
+            peakLevel = p
+        }
     }
 
     /** Peak limiter: instant attack, ~150 ms release, ceiling -0.3 dBFS. */
@@ -291,13 +433,19 @@ class DspProcessor(private val fs: Int) {
         val ceiling = 0.966f
         val release = 1f - exp(-1f / (fs * 0.15f))
         var i = 0
+        var minGain = 1f
+        var maxPeak = 0f
         for (n in 0 until frames) {
             val peak = max(abs(buf[i]), abs(buf[i + 1]))
+            if (peak > maxPeak) maxPeak = peak
             val needed = if (peak * limGain > ceiling) ceiling / peak else 1f
             limGain = if (needed < limGain) needed else limGain + (1f - limGain) * release
+            if (limGain < minGain) minGain = limGain
             buf[i] *= limGain; buf[i + 1] *= limGain
             i += 2
         }
+        limiting = minGain < 0.99f
+        peakLevel = maxPeak
     }
 
     companion object {

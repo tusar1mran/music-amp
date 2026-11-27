@@ -3,6 +3,7 @@ package com.musicamp.poweramp
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.ConnectivityManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
@@ -34,7 +35,13 @@ object AlbumArtFetcher {
     private fun dir(context: Context) = File(context.filesDir, "art").also { it.mkdirs() }
 
     /** Returns a cached or freshly downloaded cover, or null. Never throws. */
-    suspend fun fetch(context: Context, artist: String, album: String, highRes: Boolean): Bitmap? = withContext(Dispatchers.IO) {
+    suspend fun fetch(
+        context: Context,
+        artist: String,
+        album: String,
+        highRes: Boolean,
+        wifiOnly: Boolean = true
+    ): Bitmap? = withContext(Dispatchers.IO) {
         if (album.isBlank() || album.equals("Unknown album", true)) return@withContext null
         val k = key(artist, album)
         val file = File(dir(context), "$k.jpg")
@@ -42,6 +49,10 @@ object AlbumArtFetcher {
         try {
             if (file.exists()) return@withContext decode(file, highRes)
             if (miss.exists() && System.currentTimeMillis() - miss.lastModified() < MISS_TTL_MS) return@withContext null
+            if (wifiOnly) {
+                val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                if (cm != null && cm.isActiveNetworkMetered) return@withContext null
+            }
             val mbid = mutex.withLock {
                 val wait = 1100L - (System.currentTimeMillis() - lastMbRequestAt)
                 if (wait > 0) delay(wait)

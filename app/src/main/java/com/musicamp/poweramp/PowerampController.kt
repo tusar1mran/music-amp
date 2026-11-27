@@ -53,6 +53,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
@@ -152,7 +153,11 @@ class PowerampController(private val context: Context) {
     var showTrackActionDialog by mutableStateOf(false)
     var actionTargetTrack by mutableStateOf<AudioTrack?>(null)
     var showInfoTagsSheet by mutableStateOf(false)
+    var showAudioInfoDialog by mutableStateOf(false)
     var showEditTagsDialog by mutableStateOf(false)
+    var limiterActive by mutableStateOf(false)
+    private var limiterHoldUntilMs = 0L
+    private var lastLimiterPollAt = 0L
     var showLyricsScreen by mutableStateOf(false)
     var showSleepTimerDialog by mutableStateOf(false)
     var showEqPresetSheet by mutableStateOf(false)
@@ -174,6 +179,58 @@ class PowerampController(private val context: Context) {
     val queueTracks = mutableStateListOf<AudioTrack>()
     val bookmarks = mutableStateListOf<BookmarkItem>()
     val playlists = mutableStateListOf<PlaylistItem>()
+    val sortOrderByCategory = mutableStateMapOf<LibraryCategory, SortOrder>()
+    val sortReversedByCategory = mutableStateMapOf<LibraryCategory, Boolean>()
+    val viewStyleByCategory = mutableStateMapOf<LibraryCategory, LibraryViewStyle>()
+    val presetForOutput = mutableStateMapOf<OutputKind, String>()
+    val presetForDevice = mutableStateMapOf<String, String>()
+    val presetForTrack = mutableStateMapOf<Long, String>()
+
+    fun sortOrderFor(category: LibraryCategory): SortOrder = sortOrderByCategory[category] ?: when (category) {
+        LibraryCategory.ALBUMS -> SortOrder.TRACK_NUMBER
+        LibraryCategory.MOST_PLAYED -> SortOrder.PLAY_COUNT
+        LibraryCategory.RECENTLY_PLAYED -> SortOrder.LAST_PLAYED
+        LibraryCategory.RECENTLY_ADDED -> SortOrder.DATE_ADDED
+        else -> SortOrder.TITLE
+    }
+
+    fun sortReversedFor(category: LibraryCategory): Boolean = sortReversedByCategory[category] ?: when (category) {
+        LibraryCategory.MOST_PLAYED, LibraryCategory.RECENTLY_PLAYED, LibraryCategory.RECENTLY_ADDED -> true
+        else -> false
+    }
+
+    fun viewStyleFor(category: LibraryCategory): LibraryViewStyle =
+        viewStyleByCategory[category] ?: LibraryViewStyle.LIST
+
+    /** Stable, case-insensitive sort for a category's track list. */
+    fun sortTracks(tracks: List<AudioTrack>, category: LibraryCategory): List<AudioTrack> {
+        if (tracks.size <= 1) return tracks
+        val order = sortOrderFor(category)
+        val reversed = sortReversedFor(category)
+        val comparator: Comparator<AudioTrack> = when (order) {
+            SortOrder.TITLE -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.title }
+            SortOrder.ARTIST -> compareBy<AudioTrack, String>(String.CASE_INSENSITIVE_ORDER) { it.artist }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.album }
+                .thenBy { it.discNumber }.thenBy { it.trackNumber }
+            SortOrder.ALBUM -> compareBy<AudioTrack, String>(String.CASE_INSENSITIVE_ORDER) { it.album }
+                .thenBy { it.discNumber }.thenBy { it.trackNumber }
+            SortOrder.ALBUM_ARTIST -> compareBy<AudioTrack, String>(String.CASE_INSENSITIVE_ORDER) { it.albumArtist }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.album }
+                .thenBy { it.discNumber }.thenBy { it.trackNumber }
+            SortOrder.YEAR -> compareBy<AudioTrack> { it.year }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.title }
+            SortOrder.DURATION -> compareBy<AudioTrack> { it.durationMs }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.title }
+            SortOrder.DATE_ADDED -> compareBy<AudioTrack> { it.dateAddedSec }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.title }
+            SortOrder.PLAY_COUNT -> compareBy<AudioTrack> { it.playCount }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.title }
+            SortOrder.RATING -> compareBy<AudioTrack> { it.rating }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.title }
+            SortOrder.FILE_NAME -> compareBy(String.CASE_INSENSITIVE_ORDER) { it.fileName }
+            SortOrder.TRACK_NUMBER -> compareBy<AudioTrack> { it.discNumber }
+                .thenBy { it.trackNumber }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title }
+            SortOrder.LAST_PLAYED -> compareBy<AudioTrack> { it.lastPlayedTimestamp }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.title }
+        }
+        val sorted = tracks.sortedWith(comparator)
+        return if (reversed) sorted.reversed() else sorted
+    }
     val streams = mutableStateListOf<StreamItem>()
 
     // Selection Mode in Lists
@@ -200,6 +257,50 @@ class PowerampController(private val context: Context) {
 
     var repeatMode by mutableStateOf(RepeatMode.REPEAT_CATEGORY)
     var shuffleMode by mutableStateOf(ShuffleMode.OFF)
+    var abStartMs by mutableStateOf<Long?>(null)
+    var abEndMs by mutableStateOf<Long?>(null)
+
+    fun clearAbRepeat() {
+        abStartMs = null
+        abEndMs = null
+    }
+
+    fun cycleAbRepeat() {
+        if (durationMs <= 0L) return
+        val a = abStartMs
+        val b = abEndMs
+        when {
+            a == null -> {
+                abStartMs = currentPositionMs.coerceIn(0L, durationMs)
+                abEndMs = null
+                showToast("A-B Repeat", "Point A set (${formatTime(abStartMs!!)})")
+            }
+            b == null -> {
+                val pos = currentPositionMs.coerceIn(0L, durationMs)
+                if (pos > a + 200L) {
+                    abEndMs = pos
+                    seekToMs(a)
+                    showToast("A-B Repeat", "Looping ${formatTime(a)} – ${formatTime(pos)}")
+                } else if (pos + 200L < a) {
+                    abStartMs = pos
+                    abEndMs = a
+                    seekToMs(pos)
+                    showToast("A-B Repeat", "Looping ${formatTime(pos)} – ${formatTime(a)}")
+                } else {
+                    showToast("A-B Repeat", "Let playback advance past point A")
+                }
+            }
+            else -> {
+                clearAbRepeat()
+                showToast("A-B Repeat", "Off")
+            }
+        }
+    }
+
+    private fun formatTime(ms: Long): String {
+        val sec = (ms / 1000L).coerceAtLeast(0L)
+        return "%d:%02d".format(sec / 60L, sec % 60L)
+    }
     var visMode by mutableStateOf(VisMode.DISABLED)
     var visPhase by mutableFloatStateOf(0f)
     val visPresets = BUILT_IN_VIS_PRESETS
@@ -225,8 +326,39 @@ class PowerampController(private val context: Context) {
     var toneEnabled by mutableStateOf(true)
     var limitEnabled by mutableStateOf(true)
     var preampDb by mutableFloatStateOf(0.0f) // -15f..15f
-    val bandFrequencies = listOf("31", "62", "125", "250", "500", "1K", "2K", "4K", "8K", "16K")
+    var graphicBandCount by mutableIntStateOf(10) // 5..32
+    var graphicStartHz by mutableFloatStateOf(31f)
+    var graphicEndHz by mutableFloatStateOf(16000f)
+    val bandFrequenciesHz = mutableStateListOf<Float>().apply { addAll(ISO_10_BAND_HZ) }
+    val bandFrequencies: List<String> get() = bandFrequenciesHz.map { formatFreqLabel(it) }
     val bandGainsDb = mutableStateListOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)
+
+    /** Changes the graphic EQ band count / span and resamples existing gains by log-frequency interpolation. */
+    private var bandCurveSource: Pair<List<Float>, List<Float>>? = null
+    private var lastResampledGains: List<Float>? = null
+
+    fun setGraphicBandConfig(count: Int, startHz: Float = graphicStartHz, endHz: Float = graphicEndHz) {
+        val clampedCount = count.coerceIn(5, 32)
+        val clampedStart = startHz.coerceIn(20f, 500f)
+        val clampedEnd = endHz.coerceIn(clampedStart * 2f, 20000f)
+        val newFreqs = isoOrCustomBands(clampedCount, clampedStart, clampedEnd)
+        // Resample from the curve the user actually set, not from the previous resample: dragging the band
+        // count slider back and forth must not smear the curve. A manual band edit makes a new source.
+        val current = bandGainsDb.toList()
+        val source = bandCurveSource?.takeIf { lastResampledGains == current }
+            ?: (bandFrequenciesHz.toList() to current)
+        bandCurveSource = source
+        val resampled = resampleEqCurve(source.first, source.second, newFreqs)
+        lastResampledGains = resampled
+        graphicBandCount = clampedCount
+        graphicStartHz = clampedStart
+        graphicEndHz = clampedEnd
+        bandFrequenciesHz.clear()
+        bandFrequenciesHz.addAll(newFreqs)
+        bandGainsDb.clear()
+        bandGainsDb.addAll(resampled)
+        applyEqualizerBands()
+    }
     var bassPercent by mutableIntStateOf(0)   // 0..100
     var treblePercent by mutableIntStateOf(0) // 0..100
     var selectedPresetName by mutableStateOf("Preset")
@@ -268,7 +400,10 @@ class PowerampController(private val context: Context) {
     /** Accent colour name, one of [ACCENT_COLORS]. */
     var accentColor: String
         get() = AppTheme.accent
-        set(value) { AppTheme.accent = if (ACCENT_COLORS.containsKey(value)) value else POWERAMP_GREEN }
+        set(value) {
+            val materialYouOk = value == MATERIAL_YOU && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            AppTheme.accent = if (ACCENT_COLORS.containsKey(value) || materialYouOk) value else POWERAMP_GREEN
+        }
     var settingsTheme by mutableStateOf("Default") // "Default", "Light", "Dark", "Follow Day/Night"
     var settingsFont by mutableStateOf("Bold") // "Default", "Alternative font", "Bold", "Bold+"
     var smoothSeekbarAnimation by mutableStateOf(true)
@@ -516,9 +651,11 @@ class PowerampController(private val context: Context) {
     // 5. Album Art
     /** Off by default: sends album and artist names to MusicBrainz / Cover Art Archive. */
     var autoDownloadAlbumArt by mutableStateOf(false)
+    var albumArtWifiOnly by mutableStateOf(true)
     var highResAlbumArt by mutableStateOf(true)
     var preferEmbeddedArt by mutableStateOf(true)
     var albumArtOnLockscreen by mutableStateOf(true)
+    var lockscreenPlayerEnabled by mutableStateOf(false)
 
     // 6. Library
     var autoScanOnStartup by mutableStateOf(true)
@@ -532,6 +669,51 @@ class PowerampController(private val context: Context) {
     // 8. Misc
     var androidAutoEnabled by mutableStateOf(true)
     var scrobblingEnabled by mutableStateOf(false)
+    val notificationActions = mutableStateListOf(
+        MediaButtonAction.PREVIOUS,
+        MediaButtonAction.PLAY_PAUSE,
+        MediaButtonAction.NEXT
+    )
+    // "/" and ", " are offered but off by default: they split names such as "AC/DC" and "Earth, Wind & Fire"
+    val tagSeparators = mutableStateListOf(";", " feat. ")
+
+    fun toggleNotificationAction(action: MediaButtonAction) {
+        if (action in notificationActions) {
+            if (notificationActions.size > 1) {
+                notificationActions.remove(action)
+                playbackEpoch++
+            }
+        } else if (notificationActions.size < 6) {
+            notificationActions.add(action)
+            playbackEpoch++
+        } else {
+            showToast("Maximum 6 buttons", "Remove one before adding another")
+        }
+    }
+
+    fun toggleTagSeparator(sep: String) {
+        if (sep in tagSeparators) tagSeparators.remove(sep) else tagSeparators.add(sep)
+    }
+
+    /** Splits multi-value tags (artist, genre, composer) on [tagSeparators] for library grouping without altering track display text. */
+    fun splitMultiValueTag(raw: String): List<String> {
+        if (raw.isBlank()) return listOf(raw)
+        val seps = tagSeparators.filter { it.isNotEmpty() }
+        if (seps.isEmpty()) return listOf(raw.trim())
+        var parts = listOf(raw)
+        for (sep in seps) {
+            parts = parts.flatMap { it.split(sep, ignoreCase = true) }
+        }
+        val cleaned = parts.map { it.trim() }.filter { it.isNotEmpty() }.distinctBy { it.lowercase() }
+        return cleaned.ifEmpty { listOf(raw.trim()) }
+    }
+
+    /**
+     * True when a track's tag [raw] belongs under [filter]. Matches one of its split values, or the whole raw
+     * value (entry points such as the track menu pass the unsplit "A; B").
+     */
+    fun tagMatches(raw: String, filter: String): Boolean =
+        raw.trim().equals(filter.trim(), ignoreCase = true) || splitMultiValueTag(raw).any { it.equals(filter, ignoreCase = true) }
 
     // ==========================================================================================
     // Device volume (knob <-> hardware volume keys)
@@ -1074,7 +1256,13 @@ class PowerampController(private val context: Context) {
         var bmp: Bitmap? = if (preferEmbeddedArt) embedded() ?: folderImage() else folderImage() ?: embedded()
         var downloaded = false
         if (bmp == null && autoDownloadAlbumArt && !track.isStream) {
-            bmp = AlbumArtFetcher.fetch(context, track.albumArtist.ifBlank { track.artist }, track.album, highResAlbumArt)
+            bmp = AlbumArtFetcher.fetch(
+                context,
+                track.albumArtist.ifBlank { track.artist },
+                track.album,
+                highResAlbumArt,
+                wifiOnly = albumArtWifiOnly
+            )
             downloaded = bmp != null
         }
         if (bmp != null) artCache.put(track.id, bmp)
@@ -1313,6 +1501,7 @@ class PowerampController(private val context: Context) {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
             if (!deviceCallbackArmed) return
             updateDvc()
+            if (addedDevices?.any { it.isSink } == true) scheduleRoutePresetCheck()
             val headset = addedDevices?.any { it.isSink && it.type in headsetTypes } == true
             if (headset && resumeOnHeadsetConnect && pausedByHeadsetDisconnect && !isPlaying) {
                 pausedByHeadsetDisconnect = false
@@ -1327,7 +1516,9 @@ class PowerampController(private val context: Context) {
         }
 
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
-            if (deviceCallbackArmed) updateDvc()
+            if (!deviceCallbackArmed) return
+            updateDvc()
+            if (removedDevices?.any { it.isSink } == true) scheduleRoutePresetCheck()
         }
     }
 
@@ -1504,6 +1695,7 @@ class PowerampController(private val context: Context) {
 
     private fun loadAndStart(index: Int, autoPlay: Boolean, positionMs: Long = 0L, crossfade: Boolean = false) {
         val track = allTracks.getOrNull(index) ?: return
+        clearAbRepeat()
         if (currentStream != null) {
             currentStream = null
             streamTrack = null
@@ -1629,6 +1821,7 @@ class PowerampController(private val context: Context) {
     private var streamTrack by mutableStateOf<AudioTrack?>(null)
 
     private fun startStreamPlayback(stream: StreamItem) {
+        clearAbRepeat()
         val uri = Uri.parse(stream.url)
         val t = AudioTrack(
             id = -1_000_000L - stream.id.mod(1_000_000L), title = stream.title, artist = stream.genre,
@@ -1685,6 +1878,7 @@ class PowerampController(private val context: Context) {
         playbackEpoch++
         pendingLastTrackId = -1L
         prefs.edit().putLong("lastTrackId", track.id).apply()
+        applyAutoAssignedEqPreset(track = track, showRouteToast = true)
         probeAndAnalyse(track)
         preloadNext()
     }
@@ -1749,16 +1943,11 @@ class PowerampController(private val context: Context) {
     fun applyVolumeAndBalance() = scheduleEffects()
     fun applyTempo() = scheduleEffects()
 
-    private val uiBandHz = floatArrayOf(31f, 62f, 125f, 250f, 500f, 1000f, 2000f, 4000f, 8000f, 16000f)
-
-    /** Interpolated (log-frequency) gain in dB at [hz], from the 10 UI bands plus bass/treble shelves. */
+    /** Interpolated (log-frequency) gain in dB at [hz], from the active UI bands plus bass/treble shelves. */
     private fun gainDbAt(hz: Float): Float {
         var g = 0f
-        if (eqEnabled) {
-            val x = ln(hz.coerceIn(uiBandHz.first(), uiBandHz.last()) / uiBandHz.first()) / ln(2f)
-            val lo = x.toInt().coerceIn(0, uiBandHz.size - 2)
-            val frac = (x - lo).coerceIn(0f, 1f)
-            g += bandGainsDb[lo] * (1f - frac) + bandGainsDb[lo + 1] * frac
+        if (eqEnabled && bandFrequenciesHz.isNotEmpty() && bandGainsDb.isNotEmpty()) {
+            g += resampleEqCurve(bandFrequenciesHz.toList(), bandGainsDb.toList(), listOf(hz)).first()
         }
         if (toneEnabled) {
             val bassShelf = (1f - ((ln(hz.coerceAtLeast(20f) / 150f) / ln(2f)) + 1f) / 2f).coerceIn(0f, 1f) // full <150Hz, fades by ~600Hz
@@ -1771,7 +1960,7 @@ class PowerampController(private val context: Context) {
 
     private fun maxBoostDb(): Float {
         var m = 0f
-        for (hz in uiBandHz) m = maxOf(m, gainDbAt(hz))
+        for (hz in bandFrequenciesHz) m = maxOf(m, gainDbAt(hz))
         return m
     }
 
@@ -1859,6 +2048,7 @@ class PowerampController(private val context: Context) {
         preampDb = if (eqEnabled) preampDb else 0f,
         graphicEnabled = eqEnabled && !parametricEqEnabled,
         graphicGainsDb = bandGainsDb.toList(),
+        graphicFreqsHz = bandFrequenciesHz.toList(),
         parametricEnabled = eqEnabled && parametricEqEnabled,
         parametricBands = parametricBands.toList(),
         bassDb = if (toneEnabled) bassPercent / 100f * 12f else 0f,
@@ -1982,7 +2172,22 @@ class PowerampController(private val context: Context) {
                         val extrapolated = ((now - rawPosAt).coerceAtMost(120L) * playbackSpeed).toLong()
                         currentPositionMs = (rawPosMs + extrapolated).coerceIn(0L, durationMs)
                     }
-                    checkCrossfadeTrigger()
+                    val abA = abStartMs
+                    val abB = abEndMs
+                    if (abA != null && abB != null && abB > abA && currentPositionMs >= abB) {
+                        seekToMs(abA)
+                    } else if (abB == null) {
+                        checkCrossfadeTrigger()
+                    }
+                    if (now - lastLimiterPollAt >= 100L) {
+                        lastLimiterPollAt = now
+                        if (mp.isLimiting) {
+                            limiterHoldUntilMs = now + 180L
+                            if (!limiterActive) limiterActive = true
+                        } else if (limiterActive && now >= limiterHoldUntilMs) {
+                            limiterActive = false
+                        }
+                    }
                     if (now - lastPositionSaveAt > 5000L) savePosition()
                     val needsSpectrum = visMode != VisMode.DISABLED || currentMainTab == MainNavTab.EQUALIZER
                     if (needsSpectrum) {
@@ -1993,6 +2198,7 @@ class PowerampController(private val context: Context) {
                     val frameDelayMs = (1000f / hz).toLong().coerceIn(4L, 33L)
                     delay(frameDelayMs)
                 } else {
+                    if (limiterActive) limiterActive = false // nothing is being processed while stopped
                     val needsSpectrum = visMode != VisMode.DISABLED || currentMainTab == MainNavTab.EQUALIZER
                     if (needsSpectrum) {
                         updateSpectrum(active = false, dtSec = dtSec)
@@ -2245,6 +2451,7 @@ class PowerampController(private val context: Context) {
         hiResAudioEnabled = true
         audioBufferSize = "Normal (50ms)"
         setBitPerfect(false)
+        setGraphicBandConfig(10, 31f, 16000f)
         pauseOnHeadsetDisconnect = true
         resumeOnHeadsetConnect = true
         visFadedControlsOpacity = 0.40f
@@ -2256,15 +2463,28 @@ class PowerampController(private val context: Context) {
         backgroundSaturation = 1.0f
         backgroundDimOpacity = 0.35f
         autoDownloadAlbumArt = false
+        albumArtWifiOnly = true
         highResAlbumArt = true
         preferEmbeddedArt = true
         albumArtOnLockscreen = true
+        lockscreenPlayerEnabled = false
         autoScanOnStartup = true
         ignoreShortTracks = true
         headsetButtonsEnabled = true
         bluetoothDvcEnabled = true
         androidAutoEnabled = true
         scrobblingEnabled = false
+        notificationActions.clear()
+        notificationActions.addAll(listOf(MediaButtonAction.PREVIOUS, MediaButtonAction.PLAY_PAUSE, MediaButtonAction.NEXT))
+        tagSeparators.clear()
+        tagSeparators.addAll(listOf(";", " feat. "))
+        playbackEpoch++
+        sortOrderByCategory.clear()
+        sortReversedByCategory.clear()
+        viewStyleByCategory.clear()
+        presetForOutput.clear()
+        presetForDevice.clear()
+        presetForTrack.clear()
         showToast("Settings Reset", "Default configuration restored")
     }
 
@@ -2481,6 +2701,78 @@ class PowerampController(private val context: Context) {
         showToast(if (newRating == -1) "Unliked" else "Rating Cleared", track.title)
     }
 
+    /** Track whose file write is waiting for the system write-permission dialog (kept here so rotation doesn't lose it). */
+    var pendingTagSave: AudioTrack? = null
+
+    private fun isOpenInPlayer(track: AudioTrack): Boolean {
+        val cur = currentTrack ?: return false
+        if (mediaPlayer == null) return false
+        return (cur.uri != null && cur.uri == track.uri) || (cur.filePath.isNotBlank() && cur.filePath == track.filePath)
+    }
+
+    /**
+     * Decides whether saving [updated] must write to the audio file. When it doesn't (CUE track, format that
+     * can't be written, only app-side fields changed, or the file is open in the player), the edit is saved in
+     * the app right away with a toast saying so, and false is returned.
+     */
+    fun needsFileWrite(updated: AudioTrack): Boolean {
+        val old = allTracks.firstOrNull { it.id == updated.id }
+        when {
+            old == null -> { updateTrack(updated); return false }
+            updated.isCue -> {
+                updateTrack(updated)
+                showToast("Saved in MusicAmp only", "CUE track tags live in the cue sheet")
+                return false
+            }
+            !TagWriter.canWriteFormat(updated) -> {
+                updateTrack(updated)
+                showToast("Saved in MusicAmp only (this format can't be written yet)", updated.title)
+                return false
+            }
+            TagWriter.diff(old, updated).isEmpty -> {
+                updateTrack(updated)
+                showToast("Saved", updated.title)
+                return false
+            }
+            isOpenInPlayer(updated) -> {
+                updateTrack(updated)
+                showToast("Saved in MusicAmp only", "This file is open in the player. Play another track, then edit again to write it to the file.")
+                return false
+            }
+        }
+        return true
+    }
+
+    /** Writes the changed tag fields to the FLAC/MP3 file, then refreshes the library entry. */
+    fun saveTrackTagsToFile(updated: AudioTrack) {
+        if (!needsFileWrite(updated)) return
+        val old = allTracks.firstOrNull { it.id == updated.id } ?: return
+        val changes = TagWriter.diff(old, updated)
+        // A preloaded next player may hold the same file open
+        if (nextPlayerTrackId == updated.id) discardNextPlayer()
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { TagWriter.writeToFile(context, updated, changes) }
+            when (result) {
+                is TagWriteResult.Written -> {
+                    synchronized(tagCache) { tagCache.remove(updated.id) }
+                    updateTrack(updated)
+                    if (updated.filePath.isNotBlank()) {
+                        try {
+                            MediaScannerConnection.scanFile(context, arrayOf(updated.filePath), null) { _, _ -> }
+                        } catch (_: Exception) {
+                        }
+                    }
+                    showToast("Tags written to file", updated.title)
+                }
+                is TagWriteResult.Unsupported -> {
+                    updateTrack(updated)
+                    showToast(result.reason, updated.title)
+                }
+                is TagWriteResult.Failed -> showToast("Couldn't write tags", result.reason)
+            }
+        }
+    }
+
     fun updateTrack(updated: AudioTrack) {
         val idx = allTracks.indexOfFirst { it.id == updated.id }
         if (idx >= 0) {
@@ -2551,6 +2843,188 @@ class PowerampController(private val context: Context) {
         )
         playlists.add(newPl)
         showToast("Playlist Created", newPl.name)
+    }
+
+    fun deletePlaylist(playlistId: Long) {
+        val pl = playlists.find { it.id == playlistId } ?: return
+        playlists.removeAll { it.id == playlistId }
+        if (activeLibraryCategory == LibraryCategory.PLAYLISTS && activeSubFilter == pl.name) {
+            activeSubFilter = null
+        }
+        showToast("Playlist Deleted", pl.name)
+    }
+
+    /** Exports a playlist to the SAF [target] Uri as extended M3U8. */
+    fun exportPlaylist(playlistId: Long, target: Uri) {
+        val pl = playlists.find { it.id == playlistId } ?: run {
+            showToast("Export failed", "Playlist not found")
+            return
+        }
+        val tracksById = allTracks.associateBy { it.id }
+        val tracks = pl.trackIds.mapNotNull { tracksById[it] }
+        val content = PlaylistIo.writeM3u(tracks, extended = true)
+        scope.launch {
+            val error = withContext(Dispatchers.IO) {
+                try {
+                    (context.contentResolver.openOutputStream(target, "wt") ?: context.contentResolver.openOutputStream(target))
+                        ?.use { it.write(content.toByteArray(Charsets.UTF_8)) }
+                        ?: return@withContext "Could not open the file for writing"
+                    null
+                } catch (e: Exception) {
+                    e.message ?: "Could not write file"
+                }
+            }
+            if (error == null) showToast("Playlist exported", "${pl.name} (${tracks.size} tracks)")
+            else showToast("Export failed", error)
+        }
+    }
+
+    /** Imports an M3U/M3U8/PLS playlist from a SAF [source] Uri. Reading and matching run off the main thread. */
+    fun importPlaylist(source: Uri, displayName: String? = null) {
+        val tracks = allTracks.toList()
+        scope.launch {
+            val outcome: Pair<String, List<Long>>? = withContext(Dispatchers.IO) {
+                val resolvedName = displayName?.takeIf { it.isNotBlank() } ?: queryDisplayName(source) ?: "Imported playlist"
+                val bytes = try {
+                    context.contentResolver.openInputStream(source)?.use { s ->
+                        val b = s.readBytes()
+                        if (b.size > 4 * 1024 * 1024) null else b
+                    }
+                } catch (_: Exception) {
+                    null
+                }
+                if (bytes == null || bytes.isEmpty()) {
+                    withContext(Dispatchers.Main) { showToast("Import failed", "Could not read the playlist file") }
+                    return@withContext null
+                }
+                // A playlist is text: NUL bytes or a high share of control characters means it is not one
+                val sample = bytes.copyOf(minOf(bytes.size, 4096))
+                val controls = sample.count { b -> val c = b.toInt() and 0xFF; c < 0x09 || (c in 0x0E..0x1F) }
+                if (controls > sample.size / 50) {
+                    withContext(Dispatchers.Main) { showToast("Import failed", "This isn't a playlist file") }
+                    return@withContext null
+                }
+                val text = PlaylistIo.decodePlaylistBytes(bytes, resolvedName)
+                val entries = if (PlaylistIo.isPls(text, resolvedName)) PlaylistIo.parsePlsEntries(text) else PlaylistIo.parseM3uEntries(text)
+                if (entries.isEmpty()) {
+                    withContext(Dispatchers.Main) { showToast("Import failed", "No playlist entries found") }
+                    return@withContext null
+                }
+                val folder = guessFolderFromUri(source)
+                val matched = entries.mapNotNull { matchPlaylistEntry(it, tracks, folder)?.id }
+                if (matched.isEmpty()) {
+                    withContext(Dispatchers.Main) { showToast("Import failed", "None of the ${entries.size} entries are in your library") }
+                    return@withContext null
+                }
+                withContext(Dispatchers.Main) { showToast("Playlist imported", "${matched.size} of ${entries.size} tracks matched") }
+                resolvedName to matched
+            }
+            if (outcome == null) return@launch
+            val (resolvedName, matchedIds) = outcome
+            val baseName = resolvedName.substringBeforeLast('.').ifBlank { "Imported playlist" }
+            var finalName = baseName
+            var suffix = 2
+            while (playlists.any { it.name.equals(finalName, ignoreCase = true) }) {
+                finalName = "$baseName ($suffix)"
+                suffix++
+            }
+            playlists.add(PlaylistItem(id = System.currentTimeMillis(), name = finalName, trackIds = matchedIds))
+        }
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        return try {
+            context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            }
+        } catch (_: Exception) {
+            uri.lastPathSegment?.substringAfterLast('/')
+        }
+    }
+
+    /** File-system folder of a picked playlist, for resolving relative entries. */
+    private fun guessFolderFromUri(uri: Uri): String? {
+        if (uri.scheme == "file") return uri.path?.let { java.io.File(it).parent }
+        val docId = try {
+            if (DocumentsContract.isDocumentUri(context, uri)) DocumentsContract.getDocumentId(uri) else null
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        // External storage provider ids look like "primary:Music/x.m3u8" or "1A2B-3C4D:Music/x.m3u8"
+        if (!docId.contains(':') || docId.startsWith("raw:")) {
+            return if (docId.startsWith("raw:")) java.io.File(docId.removePrefix("raw:")).parent else null
+        }
+        return docIdToPath(docId).substringBeforeLast('/')
+    }
+
+    /**
+     * Matches a playlist entry against [tracks] in order:
+     * 1. Exact file path
+     * 2. Path relative to the playlist's folder
+     * 3. File name (case-insensitive)
+     * 4. "artist - title" from #EXTINF
+     * When multiple CUE virtual tracks share the same file path, disambiguates by #EXTINF title.
+     */
+    private fun matchPlaylistEntry(
+        entry: PlaylistEntry,
+        tracks: List<AudioTrack>,
+        playlistFolder: String?
+    ): AudioTrack? {
+        fun disambiguateCue(candidates: List<AudioTrack>): AudioTrack? {
+            if (candidates.isEmpty()) return null
+            if (candidates.size == 1) return candidates.first()
+            val extTitle = entry.extInfTitle?.trim()
+            if (!extTitle.isNullOrEmpty()) {
+                val exactArtistTitle = candidates.firstOrNull {
+                    "${it.artist} - ${it.title}".equals(extTitle, ignoreCase = true)
+                }
+                if (exactArtistTitle != null) return exactArtistTitle
+                val titlePart = extTitle.substringAfter(" - ", extTitle).trim()
+                val byTitle = candidates.firstOrNull {
+                    it.title.equals(titlePart, ignoreCase = true) ||
+                        it.title.equals(extTitle, ignoreCase = true)
+                }
+                if (byTitle != null) return byTitle
+            }
+            return candidates.first()
+        }
+
+        val normPath = PlaylistIo.normaliseEntryPath(entry.path)
+        // 1. Exact file path
+        val exactMatches = tracks.filter {
+            it.filePath.isNotEmpty() && it.filePath.replace('\\', '/').equals(normPath, ignoreCase = true)
+        }
+        if (exactMatches.isNotEmpty()) return disambiguateCue(exactMatches)
+
+        // 2. Relative path against playlist folder
+        if (!playlistFolder.isNullOrBlank() && !normPath.startsWith("/")) {
+            val resolved = PlaylistIo.resolveRelativePath(playlistFolder, normPath)
+            val relMatches = tracks.filter {
+                it.filePath.isNotEmpty() && it.filePath.replace('\\', '/').equals(resolved, ignoreCase = true)
+            }
+            if (relMatches.isNotEmpty()) return disambiguateCue(relMatches)
+        }
+
+        // 3. File name (case-insensitive)
+        val wantedName = PlaylistIo.fileNameOf(normPath)
+        if (wantedName.isNotEmpty()) {
+            val nameMatches = tracks.filter { t ->
+                val tName = t.filePath.takeIf { it.isNotEmpty() }?.let { PlaylistIo.fileNameOf(it) } ?: t.fileName
+                tName.equals(wantedName, ignoreCase = true) || t.fileName.equals(wantedName, ignoreCase = true)
+            }
+            if (nameMatches.isNotEmpty()) return disambiguateCue(nameMatches)
+        }
+
+        // 4. "artist - title" from #EXTINF
+        val extTitle = entry.extInfTitle?.trim()
+        if (!extTitle.isNullOrEmpty()) {
+            tracks.firstOrNull {
+                "${it.artist} - ${it.title}".equals(extTitle, ignoreCase = true)
+            }?.let { return it }
+            val titlePart = extTitle.substringAfter(" - ", extTitle).trim()
+            tracks.firstOrNull { it.title.equals(titlePart, ignoreCase = true) }?.let { return it }
+        }
+        return null
     }
 
     /** Opens the system share sheet with the audio file (the user chooses the destination). */
@@ -2631,20 +3105,238 @@ class PowerampController(private val context: Context) {
         }
     }
 
-    // Equalizer Preset Application
-    fun applyEqPreset(preset: EqPreset) {
+    /**
+     * Snapshot for the Audio Info dialog.
+     *
+     * Fidelity score formula:
+     * - Bit-perfect output: 100.
+     * - Otherwise start at 100:
+     *   - -20 if resampled by Android (output sample rate differs from device native output rate, or MediaPlayer fallback on hi-res)
+     *   - -10 if bit depth is reduced (source bits > output bits)
+     *   - -10 if 44.1 kHz / 48 kHz family mismatch between source and device native rate
+     *   - Clamped to 0..100.
+     */
+    data class AudioInfoSnapshot(
+        val sourceFormat: String,
+        val outputFormat: String,
+        val engineLabel: String,
+        val bitPerfect: Boolean,
+        val replayGainDb: Float,
+        val dspStages: List<String>,
+        val fidelityScore: Int
+    )
+
+    fun buildAudioInfo(): AudioInfoSnapshot {
+        val track = currentTrack
+        val mp = mediaPlayer
+        val cachedTags = track?.let { synchronized(tagCache) { tagCache[it.id] } }
+        val srcRate = mp?.sampleRate ?: cachedTags?.sampleRate ?: track?.sampleRateHz ?: 44100
+        val srcBits = when {
+            track?.isDsd == true -> 1
+            cachedTags?.bitsPerSample != null -> cachedTags.bitsPerSample
+            else -> 16
+        }
+        val codec = when {
+            currentStream != null -> "STREAM"
+            track?.isDsd == true -> "DSD (${track.formatExt.uppercase()})"
+            else -> track?.formatExt?.uppercase() ?: "—"
+        }
+        val srcFmt = if (track?.isDsd == true) {
+            "$codec · 1-bit DSD → %.1f kHz PCM".format(srcRate / 1000f)
+        } else {
+            "$codec · %.1f kHz · %d-bit".format(srcRate / 1000f, srcBits)
+        }
+
+        val enc = mp?.outputEncoding ?: AudioFormat.ENCODING_PCM_16BIT
+        val (encName, outBits) = when (enc) {
+            AudioFormat.ENCODING_PCM_FLOAT -> "PCM 32-bit Float" to 32
+            AudioFormat.ENCODING_PCM_32BIT -> "PCM 32-bit" to 32
+            AudioFormat.ENCODING_PCM_24BIT_PACKED -> "PCM 24-bit" to 24
+            else -> "PCM 16-bit" to 16
+        }
+        val bp = mp?.isBitPerfectOutput == true || bitPerfectActive
+        val engineLbl = when {
+            mp == null -> "Idle"
+            mp.isNative -> "MusicAmp Native Engine"
+            else -> "Android MediaPlayer"
+        }
+        val outFmt = "$encName · %.1f kHz${if (bp) " · Bit-Perfect" else ""}".format(srcRate / 1000f)
+
+        val stages = buildList {
+            if (!bp) {
+                if (kotlin.math.abs(preampDb) > 0.05f) add("Preamp (%+.1f dB)".format(preampDb))
+                if (eqEnabled && !parametricEqEnabled && bandGainsDb.any { kotlin.math.abs(it) > 0.05f }) {
+                    add("Graphic EQ (${bandFrequenciesHz.size} bands)")
+                }
+                if (eqEnabled && parametricEqEnabled && parametricBands.any { it.enabled }) {
+                    add("Parametric EQ (${parametricBands.count { it.enabled }} filters)")
+                }
+                if (toneEnabled && (bassPercent > 0 || treblePercent > 0)) add("Tone (Bass/Treble)")
+                if (monoEnabled) add("Mono")
+                else if (stereoExpandPercent > 0) add("Stereo Expand ($stereoExpandPercent%)")
+                if (reverbEnabled) add("Reverb ($selectedReverbPreset)")
+                if (dvcActive) add("DVC Software Volume")
+                if (limitEnabled) add("Peak Limiter")
+                if (tempoEnabled && kotlin.math.abs(tempoMultiplier - 1f) > 0.01f) add("Tempo (%.2fx)".format(tempoMultiplier))
+            }
+        }
+
+        val deviceRate = try {
+            audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull() ?: 48000
+        } catch (_: Exception) {
+            48000
+        }
+        val score = if (bp) {
+            100
+        } else {
+            var s = 100
+            val resampled = srcRate != deviceRate || (mp != null && !mp.isNative && srcRate > 48000)
+            if (resampled) s -= 20
+            if (srcBits > outBits) s -= 10
+            val srcIs44 = (srcRate % 44100 == 0) || (srcRate % 22050 == 0)
+            val devIs44 = (deviceRate % 44100 == 0) || (deviceRate % 22050 == 0)
+            if (srcIs44 != devIs44) s -= 10
+            s.coerceIn(0, 100)
+        }
+
+        return AudioInfoSnapshot(
+            sourceFormat = srcFmt,
+            outputFormat = outFmt,
+            engineLabel = engineLbl,
+            bitPerfect = bp,
+            replayGainDb = mp?.trackGainDb ?: 0f,
+            dspStages = stages,
+            fidelityScore = score
+        )
+    }
+
+    // Equalizer Preset Application & Per-output/Per-song Assignments
+    fun detectCurrentOutput(): Pair<OutputKind, String?> {
+        val devices: List<AudioDeviceInfo> = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val attrs = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+                audioManager.getAudioDevicesForAttributes(attrs)
+            } else {
+                audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter { it.isSink }
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val btTypes = setOf(
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+            AudioDeviceInfo.TYPE_BLE_HEADSET,
+            AudioDeviceInfo.TYPE_BLE_SPEAKER,
+            AudioDeviceInfo.TYPE_HEARING_AID
+        )
+        val usbTypes = setOf(
+            AudioDeviceInfo.TYPE_USB_DEVICE,
+            AudioDeviceInfo.TYPE_USB_HEADSET,
+            AudioDeviceInfo.TYPE_USB_ACCESSORY
+        )
+        val wiredTypes = setOf(
+            AudioDeviceInfo.TYPE_WIRED_HEADSET,
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            AudioDeviceInfo.TYPE_LINE_ANALOG,
+            AudioDeviceInfo.TYPE_LINE_DIGITAL
+        )
+        devices.firstOrNull { it.type in btTypes }?.let { dev ->
+            return OutputKind.BLUETOOTH to dev.productName?.toString()?.takeIf { it.isNotBlank() }
+        }
+        devices.firstOrNull { it.type in usbTypes }?.let { dev ->
+            return OutputKind.USB to dev.productName?.toString()?.takeIf { it.isNotBlank() }
+        }
+        devices.firstOrNull { it.type in wiredTypes }?.let {
+            return OutputKind.WIRED to null
+        }
+        devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }?.let {
+            return OutputKind.SPEAKER to null
+        }
+        return if (devices.isEmpty()) OutputKind.SPEAKER to null else OutputKind.OTHER to null
+    }
+
+    /**
+     * What last chose the automatic preset, e.g. "track:42=Flat" or "output:SPEAKER=Bass". The preset is only
+     * re-applied when this changes, so a preset the user picks by hand stays until the song, device or output
+     * actually changes.
+     */
+    private var lastAutoPresetKey: String? = null
+    private val routePresetCheck = Runnable { applyAutoAssignedEqPreset(showRouteToast = true) }
+
+    /** The audio route settles a moment after a device callback; check the preset once it has. */
+    private fun scheduleRoutePresetCheck() {
+        uiHandler.removeCallbacks(routePresetCheck)
+        uiHandler.postDelayed(routePresetCheck, 700L)
+    }
+
+    fun applyAutoAssignedEqPreset(track: AudioTrack? = currentTrack, showRouteToast: Boolean = true, force: Boolean = false) {
+        val (outputKind, deviceName) = detectCurrentOutput()
+        val resolved: Triple<String, String, String>? = when {
+            track != null && presetForTrack.containsKey(track.id) ->
+                Triple(presetForTrack[track.id]!!, track.title, "track:${track.id}")
+            deviceName != null && presetForDevice.containsKey(deviceName) ->
+                Triple(presetForDevice[deviceName]!!, deviceName, "device:$deviceName")
+            presetForOutput.containsKey(outputKind) ->
+                Triple(presetForOutput[outputKind]!!, outputKind.label, "output:${outputKind.name}")
+            else -> null
+        }
+        if (resolved == null) {
+            lastAutoPresetKey = null
+            return
+        }
+        val (presetName, reason, source) = resolved
+        val key = "$source=$presetName"
+        if (!force && key == lastAutoPresetKey) return // same reason as last time: respect any manual change since
+        lastAutoPresetKey = key
+        if (selectedPresetName == presetName && !parametricEqEnabled) return
+        val preset = eqPresets.firstOrNull { it.name == presetName } ?: return
+        applyEqPreset(preset, toastText = if (showRouteToast) "EQ: ${preset.name} ($reason)" else null)
+    }
+
+    fun assignPresetToCurrentOutput(presetName: String) {
+        val (kind, _) = detectCurrentOutput()
+        presetForOutput[kind] = presetName
+        showToast("EQ Assigned", "$presetName → ${kind.label}")
+        applyAutoAssignedEqPreset(showRouteToast = false, force = true)
+    }
+
+    fun assignPresetToCurrentDevice(presetName: String) {
+        val (_, devName) = detectCurrentOutput()
+        if (devName.isNullOrBlank()) return
+        presetForDevice[devName] = presetName
+        showToast("EQ Assigned", "$presetName → $devName")
+        applyAutoAssignedEqPreset(showRouteToast = false, force = true)
+    }
+
+    fun assignPresetToCurrentTrack(presetName: String) {
+        val track = currentTrack ?: return
+        presetForTrack[track.id] = presetName
+        showToast("EQ Assigned", "$presetName → ${track.title}")
+        applyAutoAssignedEqPreset(track = track, showRouteToast = false, force = true)
+    }
+
+    fun applyEqPreset(preset: EqPreset, toastText: String? = "Preset: ${preset.name}") {
         selectedPresetName = preset.name
         // A graphic preset switches back to graphic mode; the "Parametric" entry switches to the band editor
         parametricEqEnabled = preset.isParametric
         preampDb = preset.preamp
-        for (i in 0 until minOf(bandGainsDb.size, preset.bands.size)) {
-            bandGainsDb[i] = preset.bands[i]
+        val srcFreqs = if (preset.bands.size == 10) ISO_10_BAND_HZ else logSpacedBands(preset.bands.size.coerceIn(5, 32))
+        val targetFreqs = bandFrequenciesHz.toList()
+        val mapped = if (preset.bands.size == targetFreqs.size && srcFreqs == targetFreqs) {
+            preset.bands
+        } else {
+            resampleEqCurve(srcFreqs, preset.bands, targetFreqs)
+        }
+        for (i in bandGainsDb.indices) {
+            bandGainsDb[i] = mapped.getOrElse(i) { 0f }
         }
         bassPercent = (preset.bass * 100).toInt().coerceIn(0, 100)
         treblePercent = (preset.treble * 100).toInt().coerceIn(0, 100)
         applyToneAndEffects()
         applyVolumeAndBalance()
-        showToast("Preset: ${preset.name}")
+        if (toastText != null) showToast(toastText)
     }
 
     fun resetEqualizer() {
@@ -2723,6 +3415,9 @@ class PowerampController(private val context: Context) {
         o.put("toneEnabled", toneEnabled)
         o.put("limitEnabled", limitEnabled)
         o.put("preampDb", preampDb.toDouble())
+        o.put("graphicBandCount", graphicBandCount)
+        o.put("graphicStartHz", graphicStartHz.toDouble())
+        o.put("graphicEndHz", graphicEndHz.toDouble())
         o.put("bands", JSONArray().also { a -> bandGainsDb.forEach { a.put(it.toDouble()) } })
         o.put("bassPercent", bassPercent)
         o.put("treblePercent", treblePercent)
@@ -2763,7 +3458,7 @@ class PowerampController(private val context: Context) {
         o.put("parametricBands", JSONArray().also { arr ->
             parametricBands.forEach { b ->
                 arr.put(JSONObject().put("type", b.type.name).put("f", b.freqHz.toDouble()).put("g", b.gainDb.toDouble())
-                    .put("q", b.q.toDouble()).put("on", b.enabled))
+                    .put("q", b.q.toDouble()).put("on", b.enabled).put("ch", b.channel.name))
             }
         })
         o.put("pauseOnHeadsetDisconnect", pauseOnHeadsetDisconnect); o.put("resumeOnHeadsetConnect", resumeOnHeadsetConnect)
@@ -2771,12 +3466,32 @@ class PowerampController(private val context: Context) {
         o.put("visFpsTarget", visFpsTarget); o.put("visShowPresetToast", visShowPresetToast)
         o.put("backgroundType", backgroundType); o.put("backgroundBlurRadius", backgroundBlurRadius.toDouble())
         o.put("backgroundSaturation", backgroundSaturation.toDouble()); o.put("backgroundDimOpacity", backgroundDimOpacity.toDouble())
-        o.put("autoDownloadAlbumArtNet", autoDownloadAlbumArt); o.put("highResAlbumArt", highResAlbumArt)
-        o.put("preferEmbeddedArt", preferEmbeddedArt); o.put("albumArtOnLockscreen", albumArtOnLockscreen)
+        o.put("autoDownloadAlbumArtNet", autoDownloadAlbumArt); o.put("albumArtWifiOnly", albumArtWifiOnly); o.put("highResAlbumArt", highResAlbumArt)
+        o.put("preferEmbeddedArt", preferEmbeddedArt); o.put("albumArtOnLockscreen", albumArtOnLockscreen); o.put("lockscreenPlayerEnabled", lockscreenPlayerEnabled)
         o.put("autoScanOnStartup", autoScanOnStartup); o.put("ignoreShortTracks", ignoreShortTracks)
         o.put("folders", JSONArray().also { a -> selectedMusicFolders.forEach { a.put(it) } })
         o.put("headsetButtonsEnabled", headsetButtonsEnabled); o.put("bluetoothDvcEnabled", bluetoothDvcEnabled)
         o.put("androidAutoEnabled", androidAutoEnabled); o.put("scrobblingEnabled", scrobblingEnabled)
+        o.put("notificationActions", JSONArray().also { a -> notificationActions.forEach { a.put(it.name) } })
+        o.put("tagSeparators", JSONArray().also { a -> tagSeparators.forEach { a.put(it) } })
+        o.put("sortOrderByCategory", JSONObject().also { m ->
+            sortOrderByCategory.forEach { (k, v) -> m.put(k.name, v.name) }
+        })
+        o.put("sortReversedByCategory", JSONObject().also { m ->
+            sortReversedByCategory.forEach { (k, v) -> m.put(k.name, v) }
+        })
+        o.put("viewStyleByCategory", JSONObject().also { m ->
+            viewStyleByCategory.forEach { (k, v) -> m.put(k.name, v.name) }
+        })
+        o.put("presetForOutput", JSONObject().also { m ->
+            presetForOutput.forEach { (k, v) -> m.put(k.name, v) }
+        })
+        o.put("presetForDevice", JSONObject().also { m ->
+            presetForDevice.forEach { (k, v) -> m.put(k, v) }
+        })
+        o.put("presetForTrack", JSONObject().also { m ->
+            presetForTrack.forEach { (k, v) -> m.put(k.toString(), v) }
+        })
 
         // User presets
         val builtInEq = BUILT_IN_EQ_PRESETS.map { it.name }.toSet()
@@ -2846,6 +3561,19 @@ class PowerampController(private val context: Context) {
             toneEnabled = o.optBoolean("toneEnabled", toneEnabled)
             limitEnabled = o.optBoolean("limitEnabled", limitEnabled)
             preampDb = f("preampDb", preampDb)
+            val savedCount = o.optInt("graphicBandCount", 10).coerceIn(5, 32)
+            val savedStart = f("graphicStartHz", 31f).coerceIn(20f, 500f)
+            val savedEnd = f("graphicEndHz", 16000f).coerceIn(savedStart * 2f, 20000f)
+            if (savedCount != graphicBandCount || savedStart != graphicStartHz || savedEnd != graphicEndHz) {
+                graphicBandCount = savedCount
+                graphicStartHz = savedStart
+                graphicEndHz = savedEnd
+                val freqs = isoOrCustomBands(savedCount, savedStart, savedEnd)
+                bandFrequenciesHz.clear()
+                bandFrequenciesHz.addAll(freqs)
+                bandGainsDb.clear()
+                repeat(freqs.size) { bandGainsDb.add(0f) }
+            }
             o.optJSONArray("bands")?.let { a -> for (i in 0 until minOf(a.length(), bandGainsDb.size)) bandGainsDb[i] = a.optDouble(i, 0.0).toFloat() }
             bassPercent = o.optInt("bassPercent", bassPercent)
             treblePercent = o.optInt("treblePercent", treblePercent)
@@ -2895,9 +3623,10 @@ class PowerampController(private val context: Context) {
                 for (i in 0 until arr.length()) {
                     val b = arr.optJSONObject(i) ?: continue
                     val type = try { FilterType.valueOf(b.optString("type", "PEAK")) } catch (_: Exception) { FilterType.PEAK }
+                    val ch = try { Channel.valueOf(b.optString("ch", "BOTH")) } catch (_: Exception) { Channel.BOTH }
                     parametricBands.add(
                         ParametricBand(type, b.optDouble("f", 1000.0).toFloat(), b.optDouble("g", 0.0).toFloat(),
-                            b.optDouble("q", 0.71).toFloat(), b.optBoolean("on", true))
+                            b.optDouble("q", 0.71).toFloat(), b.optBoolean("on", true), ch)
                     )
                 }
             }
@@ -2912,9 +3641,11 @@ class PowerampController(private val context: Context) {
             backgroundSaturation = f("backgroundSaturation", backgroundSaturation)
             backgroundDimOpacity = f("backgroundDimOpacity", backgroundDimOpacity)
             autoDownloadAlbumArt = o.optBoolean("autoDownloadAlbumArtNet", autoDownloadAlbumArt)
+            albumArtWifiOnly = o.optBoolean("albumArtWifiOnly", albumArtWifiOnly)
             highResAlbumArt = o.optBoolean("highResAlbumArt", highResAlbumArt)
             preferEmbeddedArt = o.optBoolean("preferEmbeddedArt", preferEmbeddedArt)
             albumArtOnLockscreen = o.optBoolean("albumArtOnLockscreen", albumArtOnLockscreen)
+            lockscreenPlayerEnabled = o.optBoolean("lockscreenPlayerEnabled", lockscreenPlayerEnabled)
             autoScanOnStartup = o.optBoolean("autoScanOnStartup", autoScanOnStartup)
             ignoreShortTracks = o.optBoolean("ignoreShortTracks", ignoreShortTracks)
             o.optJSONArray("folders")?.let { a ->
@@ -2925,6 +3656,68 @@ class PowerampController(private val context: Context) {
             bluetoothDvcEnabled = o.optBoolean("bluetoothDvcEnabled", bluetoothDvcEnabled)
             androidAutoEnabled = o.optBoolean("androidAutoEnabled", androidAutoEnabled)
             scrobblingEnabled = o.optBoolean("scrobblingEnabled", scrobblingEnabled)
+            o.optJSONArray("notificationActions")?.let { arr ->
+                val parsed = (0 until arr.length()).mapNotNull { i ->
+                    MediaButtonAction.entries.firstOrNull { it.name == arr.optString(i) }
+                }.take(6)
+                if (parsed.isNotEmpty()) {
+                    notificationActions.clear()
+                    notificationActions.addAll(parsed)
+                }
+            }
+            o.optJSONArray("tagSeparators")?.let { arr ->
+                tagSeparators.clear()
+                for (i in 0 until arr.length()) {
+                    val s = arr.optString(i)
+                    if (s.isNotEmpty()) tagSeparators.add(s)
+                }
+            }
+            o.optJSONObject("sortOrderByCategory")?.let { m ->
+                sortOrderByCategory.clear()
+                m.keys().forEach { k ->
+                    val cat = LibraryCategory.entries.firstOrNull { it.name == k }
+                    val ord = SortOrder.entries.firstOrNull { it.name == m.optString(k) }
+                    if (cat != null && ord != null) sortOrderByCategory[cat] = ord
+                }
+            }
+            o.optJSONObject("sortReversedByCategory")?.let { m ->
+                sortReversedByCategory.clear()
+                m.keys().forEach { k ->
+                    val cat = LibraryCategory.entries.firstOrNull { it.name == k }
+                    if (cat != null) sortReversedByCategory[cat] = m.optBoolean(k, false)
+                }
+            }
+            o.optJSONObject("viewStyleByCategory")?.let { m ->
+                viewStyleByCategory.clear()
+                m.keys().forEach { k ->
+                    val cat = LibraryCategory.entries.firstOrNull { it.name == k }
+                    val style = LibraryViewStyle.entries.firstOrNull { it.name == m.optString(k) }
+                    if (cat != null && style != null) viewStyleByCategory[cat] = style
+                }
+            }
+            o.optJSONObject("presetForOutput")?.let { m ->
+                presetForOutput.clear()
+                m.keys().forEach { k ->
+                    val kind = OutputKind.entries.firstOrNull { it.name == k }
+                    val name = m.optString(k)
+                    if (kind != null && name.isNotBlank()) presetForOutput[kind] = name
+                }
+            }
+            o.optJSONObject("presetForDevice")?.let { m ->
+                presetForDevice.clear()
+                m.keys().forEach { k ->
+                    val name = m.optString(k)
+                    if (k.isNotBlank() && name.isNotBlank()) presetForDevice[k] = name
+                }
+            }
+            o.optJSONObject("presetForTrack")?.let { m ->
+                presetForTrack.clear()
+                m.keys().forEach { k ->
+                    val id = k.toLongOrNull()
+                    val name = m.optString(k)
+                    if (id != null && name.isNotBlank()) presetForTrack[id] = name
+                }
+            }
 
             o.optJSONArray("userEqPresets")?.let { arr ->
                 for (i in 0 until arr.length()) {

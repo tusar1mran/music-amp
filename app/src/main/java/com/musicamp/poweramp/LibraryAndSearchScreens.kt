@@ -1,7 +1,11 @@
 package com.musicamp.poweramp
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.CancellationException
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -49,16 +53,25 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -70,8 +83,11 @@ import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.SubdirectoryArrowLeft
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
@@ -705,8 +721,23 @@ private fun LibraryCategoryDetailView(
     category: LibraryCategory
 ) {
     val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
     var activeAlphabetLetter by remember { mutableStateOf<Char?>(null) }
+    var showSortSheet by remember { mutableStateOf(false) }
+    var pendingExportPlaylistId by remember { mutableStateOf<Long?>(null) }
+    val importPlaylistLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) controller.importPlaylist(uri, null)
+    }
+    val exportPlaylistLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("audio/x-mpegurl")
+    ) { uri ->
+        val plId = pendingExportPlaylistId
+        pendingExportPlaylistId = null
+        if (uri != null && plId != null) controller.exportPlaylist(plId, uri)
+    }
 
     // Determine whether we should show a grouping list first (e.g. Folders, Albums, Artists, Genres, Years, Playlists)
     // unless activeSubFilter is already chosen
@@ -714,76 +745,99 @@ private fun LibraryCategoryDetailView(
     val tracksSnapshot = controller.allTracks.toList()
     val playlistsSnapshot = controller.playlists.toList()
     val queueSnapshot = controller.queueTracks.toList()
+    val currentSortOrder = controller.sortOrderFor(category)
+    val currentSortReversed = controller.sortReversedFor(category)
+    val currentViewStyle = controller.viewStyleFor(category)
+    val hasExplicitSort = controller.sortOrderByCategory[category] != null || controller.sortReversedByCategory[category] != null
 
-    val groupingItems: List<Pair<String, String>>? = remember(category, subFilter, tracksSnapshot, playlistsSnapshot) {
+    val tagSepsSnapshot = controller.tagSeparators.toList()
+    val groupingItems: List<Triple<String, String, AudioTrack?>>? = remember(
+        category, subFilter, tracksSnapshot, playlistsSnapshot, currentSortOrder, currentSortReversed, tagSepsSnapshot
+    ) {
         if (subFilter == null) {
-            when (category) {
+            fun groupMulti(extract: (AudioTrack) -> String): List<Triple<String, String, AudioTrack?>> {
+                val buckets = LinkedHashMap<String, MutableList<AudioTrack>>()
+                val displayNames = HashMap<String, String>()
+                for (t in tracksSnapshot) {
+                    for (valStr in controller.splitMultiValueTag(extract(t))) {
+                        val key = valStr.lowercase()
+                        displayNames.putIfAbsent(key, valStr)
+                        buckets.getOrPut(key) { mutableListOf() }.add(t)
+                    }
+                }
+                return buckets.entries.map { (k, list) ->
+                    Triple(displayNames[k] ?: k, "${list.size} songs", list.firstOrNull())
+                }.sortedBy { it.first.lowercase() }
+            }
+            val base: List<Triple<String, String, AudioTrack?>>? = when (category) {
                 LibraryCategory.FOLDERS, LibraryCategory.FOLDERS_HIERARCHY -> {
                     tracksSnapshot.groupBy { it.folderName }
-                        .map { (folder, tracks) -> folder to "${tracks.size} songs | ${tracks.first().folderPath}" }
+                        .map { (folder, tracks) -> Triple(folder, "${tracks.size} songs | ${tracks.first().folderPath}", tracks.firstOrNull()) }
                         .sortedBy { it.first.lowercase() }
                 }
                 LibraryCategory.ALBUMS -> {
                     tracksSnapshot.groupBy { it.album }
-                        .map { (album, tracks) -> album to "${tracks.first().artist} • ${tracks.size} songs" }
+                        .map { (album, tracks) -> Triple(album, "${tracks.first().artist} • ${tracks.size} songs", tracks.firstOrNull()) }
                         .sortedBy { it.first.lowercase() }
                 }
-                LibraryCategory.ARTISTS, LibraryCategory.ALBUM_ARTISTS -> {
-                    tracksSnapshot.groupBy { it.artist }
-                        .map { (artist, tracks) -> artist to "${tracks.size} songs" }
-                        .sortedBy { it.first.lowercase() }
-                }
-                LibraryCategory.GENRES -> {
-                    tracksSnapshot.groupBy { it.genre }
-                        .map { (genre, tracks) -> genre to "${tracks.size} songs" }
-                        .sortedBy { it.first.lowercase() }
-                }
+                LibraryCategory.ARTISTS -> groupMulti { it.artist }
+                LibraryCategory.ALBUM_ARTISTS -> groupMulti { it.albumArtist }
+                LibraryCategory.GENRES -> groupMulti { it.genre }
                 LibraryCategory.YEARS -> {
                     tracksSnapshot.groupBy { yearLabel(it.year) }
-                        .map { (yr, tracks) -> yr to "${tracks.size} songs" }
+                        .map { (yr, tracks) -> Triple(yr, "${tracks.size} songs", tracks.firstOrNull()) }
                         .sortedByDescending { it.first }
                 }
-                LibraryCategory.COMPOSERS -> {
-                    tracksSnapshot.groupBy { it.composer }
-                        .map { (comp, tracks) -> comp to "${tracks.size} songs" }
-                        .sortedBy { it.first.lowercase() }
-                }
+                LibraryCategory.COMPOSERS -> groupMulti { it.composer }
                 LibraryCategory.PLAYLISTS -> {
-                    playlistsSnapshot.map { pl -> pl.name to "${pl.trackIds.size} songs" }
+                    val byId = tracksSnapshot.associateBy { it.id }
+                    playlistsSnapshot.map { pl ->
+                        Triple(pl.name, "${pl.trackIds.size} songs", pl.trackIds.firstOrNull()?.let { byId[it] })
+                    }
                 }
                 else -> null
             }
+            if (base != null && currentSortReversed) base.reversed() else base
         } else null
     }
 
-    val filteredTracks: List<AudioTrack> = remember(category, subFilter, tracksSnapshot, playlistsSnapshot, queueSnapshot) {
-        when (category) {
+    val filteredTracks: List<AudioTrack> = remember(
+        category, subFilter, tracksSnapshot, playlistsSnapshot, queueSnapshot, currentSortOrder, currentSortReversed, hasExplicitSort, tagSepsSnapshot
+    ) {
+        val raw = when (category) {
             LibraryCategory.ALL_SONGS -> tracksSnapshot
             LibraryCategory.FOLDERS, LibraryCategory.FOLDERS_HIERARCHY ->
                 tracksSnapshot.filter { subFilter == null || it.folderName == subFilter }
             LibraryCategory.ALBUMS ->
                 tracksSnapshot.filter { subFilter == null || it.album == subFilter }
-            LibraryCategory.ARTISTS, LibraryCategory.ALBUM_ARTISTS ->
-                tracksSnapshot.filter { subFilter == null || it.artist == subFilter }
+            LibraryCategory.ARTISTS ->
+                tracksSnapshot.filter { subFilter == null || controller.tagMatches(it.artist, subFilter) }
+            LibraryCategory.ALBUM_ARTISTS ->
+                tracksSnapshot.filter { subFilter == null || controller.tagMatches(it.albumArtist, subFilter) }
             LibraryCategory.GENRES ->
-                tracksSnapshot.filter { subFilter == null || it.genre == subFilter }
+                tracksSnapshot.filter { subFilter == null || controller.tagMatches(it.genre, subFilter) }
             LibraryCategory.YEARS ->
                 tracksSnapshot.filter { subFilter == null || yearLabel(it.year) == subFilter }
             LibraryCategory.COMPOSERS ->
-                tracksSnapshot.filter { subFilter == null || it.composer == subFilter }
+                tracksSnapshot.filter { subFilter == null || controller.tagMatches(it.composer, subFilter) }
             LibraryCategory.PLAYLISTS -> {
                 val pl = playlistsSnapshot.find { it.name == subFilter }
-                if (pl != null) tracksSnapshot.filter { it.id in pl.trackIds } else tracksSnapshot
+                if (pl != null) {
+                    val byId = tracksSnapshot.associateBy { it.id }
+                    pl.trackIds.mapNotNull { byId[it] }
+                } else tracksSnapshot
             }
             LibraryCategory.QUEUE -> queueSnapshot
-            LibraryCategory.MOST_PLAYED -> tracksSnapshot.sortedByDescending { it.playCount }
+            LibraryCategory.MOST_PLAYED -> tracksSnapshot
             LibraryCategory.TOP_RATED -> tracksSnapshot.filter { it.rating == 1 }
             LibraryCategory.LOW_RATED -> tracksSnapshot.filter { it.rating == -1 }
-            LibraryCategory.RECENTLY_PLAYED -> tracksSnapshot.filter { it.lastPlayedTimestamp > 0 }.sortedByDescending { it.lastPlayedTimestamp }
-            LibraryCategory.RECENTLY_ADDED -> tracksSnapshot.sortedByDescending { it.dateAddedSec }
+            LibraryCategory.RECENTLY_PLAYED -> tracksSnapshot.filter { it.lastPlayedTimestamp > 0 }
+            LibraryCategory.RECENTLY_ADDED -> tracksSnapshot
             LibraryCategory.LONG -> tracksSnapshot.filter { it.durationMs >= 60_000L }
             LibraryCategory.STREAMS, LibraryCategory.BOOKMARKS -> emptyList()
         }
+        val preserveOrder = (category == LibraryCategory.PLAYLISTS || category == LibraryCategory.QUEUE) && !hasExplicitSort
+        if (preserveOrder) raw else controller.sortTracks(raw, category)
     }
 
     Box(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
@@ -955,7 +1009,7 @@ private fun LibraryCategoryDetailView(
                                         controller.selectedTrackIds.clear()
                                     }
                                 }
-                                .padding(horizontal = 16.dp),
+                                .padding(horizontal = 12.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -963,6 +1017,23 @@ private fun LibraryCategoryDetailView(
                                 color = if (controller.isSelectionMode) Color.White else PowerampTextPrimary,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.ExtraBold.appWeight
+                            )
+                        }
+
+                        // Sort & View outlined pill
+                        Box(
+                            modifier = Modifier
+                                .size(width = 44.dp, height = 38.dp)
+                                .clip(RoundedCornerShape(19.dp))
+                                .border(1.2.dp, PowerampBorderGray, RoundedCornerShape(19.dp))
+                                .clickable { showSortSheet = true },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Sort,
+                                contentDescription = "Sort and view",
+                                tint = PowerampTextPrimary,
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
@@ -976,7 +1047,17 @@ private fun LibraryCategoryDetailView(
                             .clickable {
                                 when (category) {
                                     LibraryCategory.STREAMS -> controller.showAddStreamDialog = true
-                                    LibraryCategory.PLAYLISTS -> controller.showAddToPlaylistDialog = true
+                                    LibraryCategory.PLAYLISTS -> {
+                                        if (subFilter != null) {
+                                            val pl = playlistsSnapshot.find { it.name == subFilter }
+                                            if (pl != null) {
+                                                pendingExportPlaylistId = pl.id
+                                                exportPlaylistLauncher.launch("${pl.name}.m3u8")
+                                            }
+                                        } else {
+                                            controller.showAddToPlaylistDialog = true
+                                        }
+                                    }
                                     LibraryCategory.QUEUE -> {
                                         controller.queueTracks.clear()
                                         controller.showToast("Queue Cleared")
@@ -1171,11 +1252,117 @@ private fun LibraryCategoryDetailView(
                     }
                 }
             } else if (groupingItems != null) {
+                if (category == LibraryCategory.PLAYLISTS) {
+                    item(key = "import_playlist_row") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .height(36.dp)
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .border(1.2.dp, PowerampBorderGray, RoundedCornerShape(18.dp))
+                                    .clickable {
+                                        importPlaylistLauncher.launch(
+                                            arrayOf("audio/x-mpegurl", "audio/mpegurl", "application/vnd.apple.mpegurl", "application/x-mpegurl", "audio/x-scpls", "text/*")
+                                        )
+                                    }
+                                    .padding(horizontal = 14.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Import playlist",
+                                    color = PowerampTextPrimary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold.appWeight
+                                )
+                            }
+                        }
+                    }
+                    if (groupingItems.isEmpty()) {
+                        item(key = "empty_playlists") {
+                            EmptyListPlaceholder(
+                                title = "No playlists yet",
+                                subtitle = "Tap + to create a playlist or Import playlist (.m3u, .m3u8, .pls)"
+                            )
+                        }
+                    }
+                }
+                if (currentViewStyle == LibraryViewStyle.GRID_2 || currentViewStyle == LibraryViewStyle.GRID_3) {
+                    val cols = if (currentViewStyle == LibraryViewStyle.GRID_2) 2 else 3
+                    item(key = "group_grid") {
+                        val rows = groupingItems.chunked(cols)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            rows.forEach { rowItems ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    rowItems.forEach { (groupTitle, groupSub, coverTrack) ->
+                                        Column(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(16.dp))
+                                                .background(PowerampSurface)
+                                                .clickable { controller.activeSubFilter = groupTitle }
+                                                .padding(8.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .aspectRatio(1f)
+                                                    .clip(RoundedCornerShape(12.dp)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                if (coverTrack != null) {
+                                                    TrackThumb(controller, coverTrack, if (cols == 2) 150.dp else 100.dp)
+                                                } else {
+                                                    LibraryCategoryBadge(category = category, size = 56.dp)
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Text(
+                                                text = groupTitle,
+                                                color = PowerampTextPrimary,
+                                                fontSize = if (cols == 2) 14.sp else 12.sp,
+                                                fontWeight = FontWeight.ExtraBold.appWeight,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = groupSub,
+                                                color = PowerampTextSecondary,
+                                                fontSize = 11.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                    repeat(cols - rowItems.size) {
+                                        Spacer(modifier = Modifier.weight(1f))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
                 items(
                     items = groupingItems,
                     key = { it.first },
                     contentType = { "groupRow" }
-                ) { (groupTitle, groupSub) ->
+                ) { (groupTitle, groupSub, _) ->
+                    var showPlaylistMenu by remember(groupTitle) { mutableStateOf(false) }
+                    val playlistObj = if (category == LibraryCategory.PLAYLISTS) {
+                        playlistsSnapshot.find { it.name == groupTitle }
+                    } else null
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1203,7 +1390,42 @@ private fun LibraryCategoryDetailView(
                                 fontWeight = FontWeight.SemiBold.appWeight
                             )
                         }
+                        if (playlistObj != null) {
+                            Box {
+                                Icon(
+                                    imageVector = Icons.Filled.MoreVert,
+                                    contentDescription = "Playlist options",
+                                    tint = PowerampTextSecondary,
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(CircleShape)
+                                        .clickable { showPlaylistMenu = true }
+                                        .padding(6.dp)
+                                )
+                                DropdownMenu(
+                                    expanded = showPlaylistMenu,
+                                    onDismissRequest = { showPlaylistMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Export") },
+                                        onClick = {
+                                            showPlaylistMenu = false
+                                            pendingExportPlaylistId = playlistObj.id
+                                            exportPlaylistLauncher.launch("${playlistObj.name}.m3u8")
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Delete") },
+                                        onClick = {
+                                            showPlaylistMenu = false
+                                            controller.deletePlaylist(playlistObj.id)
+                                        }
+                                    )
+                                }
+                            }
+                        }
                     }
+                }
                 }
             } else if (filteredTracks.isEmpty()) {
                 item {
@@ -1212,7 +1434,84 @@ private fun LibraryCategoryDetailView(
                         subtitle = "No matching tracks in ${subFilter ?: category.title}"
                     )
                 }
+            } else if (currentViewStyle == LibraryViewStyle.GRID_2 || currentViewStyle == LibraryViewStyle.GRID_3) {
+                val cols = if (currentViewStyle == LibraryViewStyle.GRID_2) 2 else 3
+                val rows = filteredTracks.chunked(cols)
+                items(
+                    items = rows,
+                    key = { row -> row.first().id },
+                    contentType = { "trackGridRow" }
+                ) { rowTracks ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rowTracks.forEach { track ->
+                            val isCurrent = controller.currentTrack?.id == track.id
+                            val isSelected = track.id in controller.selectedTrackIds
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(
+                                        when {
+                                            isSelected -> if (AppTheme.isDark) ThemeBerryPrimary.copy(alpha = 0.28f) else Color(0xFFEFD9E4)
+                                            isCurrent -> if (AppTheme.isDark) ThemeBerryPrimary.copy(alpha = 0.16f) else Color(0xFFF7E4EE)
+                                            else -> PowerampSurface
+                                        }
+                                    )
+                                    .combinedClickable(
+                                        onClick = {
+                                            if (controller.isSelectionMode) {
+                                                if (isSelected) controller.selectedTrackIds.remove(track.id)
+                                                else controller.selectedTrackIds.add(track.id)
+                                            } else {
+                                                controller.playTrack(track, filteredTracks)
+                                            }
+                                        },
+                                        onLongClick = {
+                                            controller.actionTargetTrack = track
+                                            controller.showTrackActionDialog = true
+                                        }
+                                    )
+                                    .padding(8.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(1f)
+                                        .clip(RoundedCornerShape(12.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    TrackThumb(controller, track, if (cols == 2) 150.dp else 100.dp)
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = track.title,
+                                    color = PowerampTextPrimary,
+                                    fontSize = if (cols == 2) 14.sp else 12.sp,
+                                    fontWeight = FontWeight.ExtraBold.appWeight,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = track.artist,
+                                    color = PowerampTextSecondary,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        repeat(cols - rowTracks.size) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
             } else {
+                val isCompact = currentViewStyle == LibraryViewStyle.LIST_COMPACT
                 // 5. Track Rows matching `09_all_songs.png`
                 items(
                     items = filteredTracks,
@@ -1225,8 +1524,8 @@ private fun LibraryCategoryDetailView(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 4.dp, vertical = 2.dp)
-                            .clip(RoundedCornerShape(24.dp))
+                            .padding(horizontal = 4.dp, vertical = if (isCompact) 1.dp else 2.dp)
+                            .clip(RoundedCornerShape(if (isCompact) 14.dp else 24.dp))
                             .background(
                                 when {
                                     isSelected -> if (AppTheme.isDark) ThemeBerryPrimary.copy(alpha = 0.28f) else Color(0xFFEFD9E4)
@@ -1248,7 +1547,7 @@ private fun LibraryCategoryDetailView(
                                     controller.showTrackActionDialog = true
                                 }
                             )
-                            .padding(horizontal = 10.dp, vertical = 10.dp),
+                            .padding(horizontal = 10.dp, vertical = if (isCompact) 5.dp else 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (controller.isSelectionMode) {
@@ -1262,7 +1561,7 @@ private fun LibraryCategoryDetailView(
                             )
                         }
                         // Real cover art (or a neutral placeholder when the file has none)
-                        TrackThumb(controller, track, 72.dp)
+                        TrackThumb(controller, track, if (isCompact) 42.dp else 72.dp)
 
                         Spacer(modifier = Modifier.width(12.dp))
 
@@ -1351,6 +1650,129 @@ private fun LibraryCategoryDetailView(
                 .align(Alignment.Center)
                 .padding(end = 12.dp)
         )
+
+        if (showSortSheet) {
+            ModalBottomSheet(
+                onDismissRequest = { showSortSheet = false },
+                containerColor = PowerampSurface
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "View & Sort — ${category.title}",
+                        color = PowerampTextPrimary,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.ExtraBold.appWeight
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // View style chips
+                    Text(
+                        text = "VIEW STYLE",
+                        color = PowerampTextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold.appWeight
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        LibraryViewStyle.entries.forEach { style ->
+                            val selected = currentViewStyle == style
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(34.dp)
+                                    .clip(RoundedCornerShape(17.dp))
+                                    .background(if (selected) ThemeBerryPrimary else Color.Transparent)
+                                    .border(1.dp, if (selected) ThemeBerryPrimary else PowerampBorderGray, RoundedCornerShape(17.dp))
+                                    .clickable { controller.viewStyleByCategory[category] = style },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = style.label,
+                                    color = if (selected) PowerampOnAccent else PowerampTextPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold.appWeight
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Reverse toggle
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                controller.sortReversedByCategory[category] = !currentSortReversed
+                            }
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Reverse order",
+                            color = PowerampTextPrimary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold.appWeight
+                        )
+                        Switch(
+                            checked = currentSortReversed,
+                            onCheckedChange = { controller.sortReversedByCategory[category] = it }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "SORT BY",
+                        color = PowerampTextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold.appWeight
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    SortOrder.entries.forEach { order ->
+                        val selected = currentSortOrder == order
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (selected) ThemeBerryPrimary.copy(alpha = 0.16f) else Color.Transparent)
+                                .clickable {
+                                    controller.sortOrderByCategory[category] = order
+                                    showSortSheet = false
+                                }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = order.label,
+                                color = if (selected) ThemeBerryPrimary else PowerampTextPrimary,
+                                fontSize = 15.sp,
+                                fontWeight = if (selected) FontWeight.ExtraBold.appWeight else FontWeight.SemiBold.appWeight
+                            )
+                            if (selected) {
+                                Icon(
+                                    imageVector = Icons.Filled.Check,
+                                    contentDescription = "Selected",
+                                    tint = ThemeBerryPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(20.dp))
+                }
+            }
+        }
     }
 }
 
