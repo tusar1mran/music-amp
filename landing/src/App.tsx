@@ -47,8 +47,8 @@ gsap.registerPlugin(ScrollTrigger)
 const WALKTHROUGH_STEPS = [
   {
     id: 'player',
-    label: 'Live FFT Spectrum & Waveform',
-    caption: 'Long-press cover art for real-time spectrum bars and waveform seek.',
+    label: 'Spectrum Visualizations',
+    caption: 'Fade or Full Screen visualization with 11 spectrum presets, and a waveform under the controls you drag to seek.',
   },
   {
     id: 'eq',
@@ -293,7 +293,7 @@ export default function App() {
 
   // Real emulator screenshots (clean spectrum player + EQ + Library + Light/Dark Settings)
   const screens = {
-    player: '/images/screen-player-light.png', // Clean spectrum + waveform, no toast overlay
+    player: '/images/screen-player-light.png', // Player with Fade visualization and waveform seekbar
     eq: '/images/screen-eq-light.png', // Live neon green EQ + spectrum bar
     library: '/images/screen-library-dark.png',
     settings: theme.isDark
@@ -944,8 +944,8 @@ export default function App() {
               },
               {
                 icon: Waves,
-                title: 'Cached waveform & live FFT',
-                desc: 'Decoded audio waveforms cache to disk for instant scrubbing, plus a live FFT spectrum overlay right over album art.',
+                title: 'Waveform seek & visualizations',
+                desc: 'Cached waveforms scroll under the transport for drag-to-seek, and the live spectrum runs over the cover or full screen with 11 presets that can cycle or shuffle.',
               },
               {
                 icon: ListMusic,
