@@ -238,10 +238,12 @@ class MainActivity : ComponentActivity() {
             when (keyCode) {
                 KeyEvent.KEYCODE_VOLUME_UP -> {
                     controller.adjustDvcVolume(+1)
+                    controller.flashVolumeOverlay()
                     return true
                 }
                 KeyEvent.KEYCODE_VOLUME_DOWN -> {
                     controller.adjustDvcVolume(-1)
+                    controller.flashVolumeOverlay()
                     return true
                 }
             }
@@ -424,6 +426,19 @@ fun PowerampRootApp(controller: PowerampController) {
                 body = "• Swipe left/right on Album Art or Mini-player to change track with slide animation\n• Drag across the Waveseek bars to scrub track position\n• Double-tap any Rotary Knob or EQ Slider to reset to 0.0\n• Long-press any track in Library or Search for the Track Context Menu",
                 onDismiss = { controller.showHelpDialog = false }
             )
+        }
+
+        // Volume popup while Direct Volume Control owns the volume keys (Android shows nothing then)
+        AnimatedVisibility(
+            visible = controller.volumeOverlayVisible,
+            enter = slideInVertically(tween(180)) { -it } + fadeIn(tween(150)),
+            exit = slideOutVertically(tween(200)) { -it } + fadeOut(tween(160)),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(top = 8.dp)
+        ) {
+            PowerampVolumeOverlay(percent = controller.volumePercent)
         }
 
         // Poweramp Bottom Toast Notification Banner (`14_vis_panel.png`) with slide + fade animation

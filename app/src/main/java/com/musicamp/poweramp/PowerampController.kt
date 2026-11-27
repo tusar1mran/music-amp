@@ -174,6 +174,29 @@ class PowerampController(private val context: Context) {
     var toastSubtitle by mutableStateOf<String?>(null)
     private var toastJob: Job? = null
 
+    // In-app volume popup (Poweramp style). With Direct Volume Control the volume keys never reach the
+    // system stream, so Android shows no volume panel; this popup is the only feedback.
+    var volumeOverlayVisible by mutableStateOf(false)
+        private set
+    private var volumeOverlayJob: Job? = null
+
+    fun flashVolumeOverlay() {
+        volumeOverlayVisible = true
+        volumeOverlayJob?.cancel()
+        volumeOverlayJob = scope.launch {
+            delay(1500)
+            volumeOverlayVisible = false
+        }
+    }
+
+    /** 1-based position of the current track in the list playback walks through, and that list's size. */
+    fun playbackPosition(): Pair<Int, Int>? {
+        val id = currentTrack?.id ?: return null
+        val list = currentList()
+        val pos = list.indexOfFirst { it.id == id }
+        return if (pos < 0) null else (pos + 1) to list.size
+    }
+
     // Library Data
     val allTracks = mutableStateListOf<AudioTrack>()
     val queueTracks = mutableStateListOf<AudioTrack>()

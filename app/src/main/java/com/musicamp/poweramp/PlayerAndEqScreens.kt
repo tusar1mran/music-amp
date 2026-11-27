@@ -43,6 +43,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -217,6 +218,65 @@ private fun PowerampPlayerScreenContent(
                             }
                         }
                     }
+                }
+
+                // Space between the header row and the art carousel (tall screens): album and
+                // list position, like the info line Poweramp shows above the cover
+                Column(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .statusBarsPadding()
+                ) {
+                    Spacer(modifier = Modifier.height(52.dp)) // header row: 40dp button + 2 × 6dp padding
+                    BoxWithConstraints(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .padding(horizontal = 32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val album = track?.album?.takeIf { it.isNotBlank() }
+                        val position = remember(track?.id, controller.allTracks.size, controller.queueTracks.size) {
+                            controller.playbackPosition()
+                        }
+                        val positionText = position?.let { (i, n) -> "$i / $n" }
+                        val shown = controller.currentStream == null && (album != null || positionText != null)
+                        if (shown && maxHeight >= 22.dp) {
+                            if (maxHeight >= 44.dp) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    if (album != null) {
+                                        Text(
+                                            text = album,
+                                            color = Color.White.copy(alpha = 0.85f),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold.appWeight,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    if (positionText != null) {
+                                        Text(
+                                            text = positionText,
+                                            color = Color.White.copy(alpha = 0.55f),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium.appWeight,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            } else {
+                                Text(
+                                    text = listOfNotNull(album, positionText).joinToString("  ·  "),
+                                    color = Color.White.copy(alpha = 0.75f),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold.appWeight,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(219.dp)) // carousel: 215dp + 4dp bottom padding
                 }
 
                 // ALBUM ART CAROUSEL (Center card + left/right peek cards)

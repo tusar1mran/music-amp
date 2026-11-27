@@ -55,6 +55,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.VolumeDown
+import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.outlined.BookmarkBorder
@@ -81,6 +83,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -2807,6 +2810,64 @@ fun PowerampSettingsOverlay(controller: PowerampController) =
 @Composable
 fun PowerampToastOverlay(title: String, subtitle: String?, modifier: Modifier = Modifier) =
     AppTextStyleScope { PowerampToastOverlayContent(title, subtitle, modifier) }
+
+/**
+ * Volume popup shown at the top while the volume keys drive the app's own (DVC) volume,
+ * like Poweramp's volume panel: speaker icon, level bar and percentage.
+ */
+@Composable
+private fun PowerampVolumeOverlayContent(percent: Int, modifier: Modifier = Modifier) {
+    val level = percent.coerceIn(0, 100)
+    Row(
+        modifier = modifier
+            .padding(horizontal = 40.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(24.dp))
+            .background(Color(0xEE2B2C30))
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = when {
+                level == 0 -> Icons.Filled.VolumeOff
+                level < 50 -> Icons.Filled.VolumeDown
+                else -> Icons.Filled.VolumeUp
+            },
+            contentDescription = "Volume",
+            tint = Color.White,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(Color.White.copy(alpha = 0.18f))
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(level / 100f)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(ThemeBerryPrimary)
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = "$level%",
+            color = Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold.appWeight,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(40.dp)
+        )
+    }
+}
+
+@Composable
+fun PowerampVolumeOverlay(percent: Int, modifier: Modifier = Modifier) =
+    AppTextStyleScope { PowerampVolumeOverlayContent(percent, modifier) }
 
 @Composable
 fun PowerampSimpleInfoDialog(title: String, body: String, onDismiss: () -> Unit) =
